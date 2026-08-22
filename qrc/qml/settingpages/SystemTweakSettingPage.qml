@@ -109,8 +109,7 @@ YSettingItemPage {
             YSettingSwitchItem {
                 implicitHeight: 54
                 title: "扫描时暂停播放"
-                //switchOn: musicPlayer.pauseOnScan
-                switchOn: false
+                switchOn: musicPlayer.pauseOnScan
                 interval: 0
                 onTimerTriggered: {
                     musicPlayer.pauseOnScan = switchOn

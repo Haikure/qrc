@@ -5,8 +5,9 @@ import "./settingpages"
 import "./audiopages"
 import "./assistant/components"
 import "./assistant/messages"
+import "./assistant/messages/ChatNavigation.js" as ChatNavigation
 import "./assistant/dialogs"
-import QtQuick 2.12
+import QtQuick 2.15
 import QtGraphicalEffects 1.12
 import com.github.penuniverse 1.0
 
@@ -14,19 +15,61 @@ YPage {
     id: id_chat_assistant_page
     objectName: "YPage===ChatAssistant.qml"
     pageIndex: PageIndex.ChatAssistant
+    deferHomeCloseUntilLongPress: true
 
     property bool historyLoaded: false
     property string messageContent: ""
     property bool isSearchEnabled: false
     property bool mathServerAvailable: false
+    property bool bubbleTextureCacheEnabled: true
     property var keyboardPageRef: null
+    property var _keyboardComponent: null
+    property var _keyboardIncubator: null
+    property bool _keyboardRequested: false
     property bool isGenerating: false
     property bool captureModeActive: false
     property bool _layoutStabilizing: false
     property bool _preparingSend: false
     property bool _toolCallActive: false
     property int _attachmentReadSeq: 0
+    property int _pendingJumpIndex: -1
+    property int _navigationTargetIndex: -1
+    property bool _navigationJumping: false
+    property int _jumpAttempts: 0
+    property int _jumpStableFrames: 0
+    property int _followAttempts: 0
+    property int _followStableFrames: 0
+    property real _followLastContentHeight: -1
     property var _mathProbeRequest: null
+
+    function _beginRichContentCommit() {
+        if (id_chat_listview.moving)
+            return;
+        if (id_rich_content_anchor_timer.running)
+            return;
+
+        var distanceToBottom = id_chat_listview.contentHeight - id_chat_listview.contentY - id_chat_listview.height;
+        if (!id_chat_listview.userScrolledUp && distanceToBottom <= id_chat_listview.bottomThreshold) {
+            id_rich_content_anchor_timer.pinBottom = true;
+            id_rich_content_anchor_timer.anchorIndex = -1;
+            id_rich_content_anchor_timer.beginTracking();
+            return;
+        }
+
+        var anchorIndex = id_chat_listview.indexAt(4, id_chat_listview.contentY + 1);
+        if (anchorIndex < 0)
+            anchorIndex = id_chat_listview.indexAt(id_chat_listview.width / 2, id_chat_listview.contentY + 1);
+        if (anchorIndex < 0)
+            return;
+        var anchorItem = id_chat_listview.itemAtIndex(anchorIndex);
+        if (!anchorItem)
+            return;
+
+        id_rich_content_anchor_timer.pinBottom = false;
+        id_rich_content_anchor_timer.anchorIndex = anchorIndex;
+        id_rich_content_anchor_timer.anchorOffset = anchorItem.y - id_chat_listview.contentY;
+        id_rich_content_anchor_timer.beginTracking();
+    }
 
     function resetCaptureMode() {
         captureModeActive = false;
@@ -55,7 +98,7 @@ YPage {
 
     Connections {
         target: chatbot
-        onMathRenderConfigChanged: {
+        function onMathRenderConfigChanged() {
             if (chatbot.mathRenderEnabled) {
                 _startMathServer();
                 mathServerProbe.restart();
@@ -121,6 +164,7 @@ YPage {
         if (visible) {
             if (typeof keyBoard !== 'undefined' && keyBoard !== null)
                 keyBoard.autoSendScan = keyBoard.autoSendScanConfig;
+            Qt.callLater(consumePendingVoiceChat);
         } else {
             _attachmentReadSeq++;
             _preparingSend = false;
@@ -285,32 +329,171 @@ YPage {
         }
     }
 
-    function _makeToolCardEntry(toolCallId, toolState, text, rawText, isComplete) {
+    function _appendAnswerPlaceholder() {
+        chatModel.append({
+            "text": "",
+            "raw_text": "",
+            "reasoning_text": "",
+            "isUser": false,
+            "isThinking": false,
+            "isReasoning": false,
+            "isComplete": false,
+            "isToolCall": false,
+            "toolCallId": "",
+            "toolState": "",
+            "historyIndex": -1
+        });
+        return chatModel.count - 1;
+    }
+
+    function _completeLastReasoningCard() {
+        for (var i = chatModel.count - 1; i >= 0; i--) {
+            var item = chatModel.get(i);
+            if (item.isReasoning && !item.isComplete) {
+                _beginRichContentCommit();
+                chatModel.setProperty(i, "isComplete", true);
+                return;
+            }
+            if (item.isUser)
+                return;
+        }
+    }
+
+    function _makeReasoningEntry(content) {
+        return {
+            "text": "",
+            "raw_text": content || "",
+            "reasoning_text": "",
+            "isUser": false,
+            "isThinking": false,
+            "isReasoning": true,
+            "isComplete": false,
+            "isToolCall": false,
+            "toolCallId": "",
+            "toolState": "",
+            "historyIndex": -1
+        };
+    }
+
+    function _makeToolCardEntry(toolCallId, toolState, text, rawText, isComplete, entries) {
         return {
             "text": text || "",
             "raw_text": rawText || "",
             "isUser": false,
             "isThinking": false,
+            "isReasoning": false,
             "isComplete": typeof isComplete !== "undefined" ? isComplete : false,
             "isToolCall": true,
             "toolCallId": toolCallId,
             "toolState": toolState,
+            "toolEntriesJson": entries ? JSON.stringify(entries) : "",
             "historyIndex": -1
         };
+    }
+
+    function _applyToolGroup(index, entries) {
+        var completed = 0;
+        var hasError = false;
+        var activeState = "done";
+        var details = [];
+        for (var i = 0; i < entries.length; i++) {
+            var entry = entries[i];
+            if (entry.complete)
+                completed++;
+            if (entry.state === "error")
+                hasError = true;
+            else if (!entry.complete)
+                activeState = entry.state || "searching";
+            details.push((i + 1) + ". " + entry.text + (entry.raw ? "\n" + entry.raw : ""));
+        }
+        var allComplete = completed === entries.length;
+        var state = hasError ? "error" : (allComplete ? "done" : activeState);
+        var title = entries.length === 1 ? entries[0].text
+                                        : "工具调用 " + entries.length + " 项 · " + completed + " 已完成";
+        chatModel.set(index, {
+            "text": title,
+            "raw_text": details.join("\n\n"),
+            "toolState": state,
+            "isComplete": allComplete,
+            "toolCallId": entries.length > 0 ? entries[0].id : "",
+            "toolEntriesJson": JSON.stringify(entries)
+        });
+    }
+
+    function _upsertToolEntry(toolCallId, text, rawText, toolState, isComplete) {
+        var groupIndex = -1;
+        var entries = [];
+        for (var searchIndex = chatModel.count - 1; searchIndex >= 0; searchIndex--) {
+            var candidate = chatModel.get(searchIndex);
+            if (candidate.isUser)
+                break;
+            if (!candidate.isToolCall || !candidate.toolEntriesJson)
+                continue;
+            var candidateEntries;
+            try { candidateEntries = JSON.parse(candidate.toolEntriesJson); } catch (e) { candidateEntries = []; }
+            for (var candidateIndex = 0; candidateIndex < candidateEntries.length; candidateIndex++) {
+                if (candidateEntries[candidateIndex].id === toolCallId) {
+                    groupIndex = searchIndex;
+                    entries = candidateEntries;
+                    break;
+                }
+            }
+            if (groupIndex >= 0)
+                break;
+        }
+        if (groupIndex < 0 && chatModel.count > 0) {
+            var last = chatModel.get(chatModel.count - 1);
+            if (last.isToolCall && last.toolEntriesJson) {
+                groupIndex = chatModel.count - 1;
+                try { entries = JSON.parse(last.toolEntriesJson); } catch (e) { entries = []; }
+            }
+        }
+        if (groupIndex < 0) {
+            entries = [];
+            replaceThinkingOrAppend(_makeToolCardEntry("", toolState, text, rawText, isComplete, entries));
+            groupIndex = chatModel.count - 1;
+        }
+
+        var entryIndex = -1;
+        for (var i = 0; i < entries.length; i++) {
+            if (entries[i].id === toolCallId) {
+                entryIndex = i;
+                break;
+            }
+        }
+        var entry = { "id": toolCallId, "text": text || "工具调用", "raw": rawText || "",
+                      "state": toolState || "searching", "complete": !!isComplete };
+        if (entryIndex >= 0)
+            entries[entryIndex] = entry;
+        else
+            entries.push(entry);
+        _applyToolGroup(groupIndex, entries);
     }
 
     function updateCardByToolCallId(toolCallId, updates) {
         for (var i = chatModel.count - 1; i >= 0; i--) {
             var item = chatModel.get(i);
-            if (item.isToolCall && item.toolCallId === toolCallId) {
-                chatModel.remove(i);
-                chatModel.insert(i, _makeToolCardEntry(
-                    toolCallId,
-                    updates.hasOwnProperty("toolState") ? updates.toolState : item.toolState,
-                    updates.hasOwnProperty("text") ? updates.text : item.text,
-                    updates.hasOwnProperty("raw_text") ? updates.raw_text : item.raw_text,
-                    updates.hasOwnProperty("isComplete") ? updates.isComplete : item.isComplete
-                ));
+            if (!item.isToolCall)
+                continue;
+            if (item.toolEntriesJson) {
+                var entries;
+                try { entries = JSON.parse(item.toolEntriesJson); } catch (e) { entries = []; }
+                for (var j = 0; j < entries.length; j++) {
+                    if (entries[j].id !== toolCallId)
+                        continue;
+                    if (updates.hasOwnProperty("toolState")) entries[j].state = updates.toolState;
+                    if (updates.hasOwnProperty("text")) entries[j].text = updates.text;
+                    if (updates.hasOwnProperty("raw_text")) entries[j].raw = updates.raw_text;
+                    if (updates.hasOwnProperty("isComplete")) entries[j].complete = updates.isComplete;
+                    _applyToolGroup(i, entries);
+                    return;
+                }
+            }
+            if (item.toolCallId === toolCallId) {
+                chatModel.setProperty(i, "toolState", updates.hasOwnProperty("toolState") ? updates.toolState : item.toolState);
+                chatModel.setProperty(i, "text", updates.hasOwnProperty("text") ? updates.text : item.text);
+                chatModel.setProperty(i, "raw_text", updates.hasOwnProperty("raw_text") ? updates.raw_text : item.raw_text);
+                chatModel.setProperty(i, "isComplete", updates.hasOwnProperty("isComplete") ? updates.isComplete : item.isComplete);
                 return;
             }
         }
@@ -345,6 +528,16 @@ YPage {
         return index;
     }
 
+    function _followLatestMessage() {
+        _followAttempts = 0;
+        _followStableFrames = 0;
+        _followLastContentHeight = -1;
+        id_chat_listview.userScrolledUp = false;
+        id_chat_listview.hasNewMessages = false;
+        id_chat_listview.scrollToBottom();
+        id_follow_latest_timer.restart();
+    }
+
     function _scheduleScrollToBottom() {
         if (id_chat_listview.userScrolledUp) {
             id_chat_listview.hasNewMessages = true;
@@ -354,7 +547,7 @@ YPage {
             return;
         streamThrottle.scrollScheduled = true;
         Qt.callLater(function () {
-            id_chat_listview.scrollToBottom();
+            id_chat_listview.scrollToBottom(true);
             streamThrottle.scrollScheduled = false;
         });
     }
@@ -379,7 +572,7 @@ YPage {
             if (!lastItem.isUser && !lastItem.isComplete && !lastItem.isThinking && !lastItem.isToolCall) {
                 var raw = lastItem.raw_text || "";
                 chatModel.set(lastIdx, {
-                    "text": chatbot.markdownToHtml(raw),
+                    "text": "",
                     "raw_text": raw,
                     "isComplete": true,
                     "isThinking": false
@@ -400,18 +593,28 @@ YPage {
     }
 
     Component.onCompleted: {
+        _ensureKeyboardPage(false);
         if (historyLoaded)
             return;
         historyLoaded = true;
         loadHistory();
         if (chatbot.mathRenderEnabled)
             _startMathServer();
+        Qt.callLater(consumePendingVoiceChat);
     }
     Component.onDestruction: {
         _attachmentReadSeq++;
         if (_mathProbeRequest !== null)
             _mathProbeRequest.abort();
         resetCaptureMode();
+    }
+
+    function consumePendingVoiceChat() {
+        var text = mod.pendingVoiceChatText.trim();
+        if (text.length === 0 || _preparingSend || isGenerating)
+            return;
+        mod.pendingVoiceChatText = "";
+        handleUserSend(text);
     }
 
     function loadHistory() {
@@ -438,18 +641,13 @@ YPage {
             if (m.role === 'tool') {
                 var toolName = toolNameMap[m.toolCallId] || "";
                 var label = toolName === "shell_exec" ? "命令执行结果" : "搜索结果";
-                chatModel.append({
-                    "text": label,
-                    "raw_text": m.content,
-                    "isUser": false,
-                    "isComplete": true,
-                    "isThinking": false,
-                    "isToolCall": true,
-                    "toolCallId": m.toolCallId || "",
-                    "toolState": "done",
-                    "historyIndex": idx
-                });
+                _upsertToolEntry(m.toolCallId || "", label, m.content, "done", true);
+                chatModel.setProperty(chatModel.count - 1, "historyIndex", idx);
                 continue;
+            }
+            if (m.role === 'assistant' && m.reasoning) {
+                chatModel.append(_makeReasoningEntry(m.reasoning));
+                chatModel.setProperty(chatModel.count - 1, "isComplete", true);
             }
             if (m.role === 'assistant' && m.toolCallsJson && m.toolCallsJson !== "") {
                 if (!m.content || m.content.trim() === "")
@@ -457,9 +655,10 @@ YPage {
             }
             var isUser = m.role === 'user';
             chatModel.append({
-                "text": isUser ? m.content : chatbot.markdownToHtml(m.content),
+                "text": isUser ? m.content : "",
                 "isUser": isUser,
                 "raw_text": m.content,
+                "reasoning_text": "",
                 "isComplete": true,
                 "isThinking": false,
                 "isToolCall": false,
@@ -470,8 +669,80 @@ YPage {
         }
         _layoutStabilizing = true;
         id_chat_listview.forceLayout();
-        id_chat_listview.scrollToBottom();
+        id_chat_listview.scrollToTop();
         id_layout_stabilize_timer.restart();
+    }
+
+    function _showCachedKeyboard() {
+        if (!keyboardPageRef)
+            return;
+        _keyboardRequested = false;
+        keyboardPageRef.placeHolderText = "输入消息...";
+        keyboardPageRef.resetInput(messageContent);
+        keyboardPageRef.show();
+        qmlGlobal.inputPageShowing = true;
+    }
+
+    function _initializeKeyboardPage(keyboardPage) {
+        keyboardPageRef = keyboardPage;
+        keyboardPage.backButtonClicked.connect(function () {
+            qmlGlobal.inputPageShowing = false;
+            if (typeof keyBoard !== 'undefined' && keyBoard !== null)
+                keyBoard.autoSendScan = keyBoard.autoSendScanConfig;
+        });
+        keyboardPage.inputFinished.connect(function (content) {
+            if (typeof keyBoard !== 'undefined' && keyBoard !== null)
+                keyBoard.autoSendScan = keyBoard.autoSendScanConfig;
+            if (content && content.trim().length > 0)
+                handleUserSend(content.trim());
+        });
+        if (_keyboardRequested)
+            _showCachedKeyboard();
+    }
+
+    function _ensureKeyboardPage(showWhenReady) {
+        if (showWhenReady)
+            _keyboardRequested = true;
+        if (keyboardPageRef) {
+            if (_keyboardRequested)
+                _showCachedKeyboard();
+            return;
+        }
+        if (_keyboardComponent !== null || _keyboardIncubator !== null)
+            return;
+
+        var component = Qt.createComponent("qrc:/qml/YInputPage.qml", Component.Asynchronous);
+        _keyboardComponent = component;
+        function incubateKeyboard() {
+            if (_keyboardComponent !== component || component.status !== Component.Ready)
+                return;
+            var incubator = component.incubateObject(id_page_pop_helper.containerItem,
+                                                     { "visible": false, "destroyOnBack": false },
+                                                     Qt.Asynchronous);
+            _keyboardIncubator = incubator;
+            function keyboardReady() {
+                if (incubator.status === Component.Ready) {
+                    _keyboardIncubator = null;
+                    _keyboardComponent = null;
+                    _initializeKeyboardPage(incubator.object);
+                    component.destroy();
+                } else if (incubator.status === Component.Error) {
+                    _keyboardIncubator = null;
+                    _keyboardComponent = null;
+                    component.destroy();
+                }
+            }
+            if (incubator.status === Component.Ready)
+                keyboardReady();
+            else
+                incubator.onStatusChanged = keyboardReady;
+        }
+        if (component.status === Component.Ready)
+            incubateKeyboard();
+        else if (component.status === Component.Loading)
+            component.statusChanged.connect(incubateKeyboard);
+        else
+            _keyboardComponent = null;
     }
 
     function showKeyboard() {
@@ -481,19 +752,7 @@ YPage {
             keyBoard.autoSendScan = false;
         id_session_panel.close();
         id_message_index_panel.close();
-
-        let component = qmlCreateComponent("YInputPage");
-        if (Component.Ready === component.status) {
-            var incubator = component.incubateObject(id_page_pop_helper.containerItem);
-            if (incubator.status !== Component.Ready) {
-                incubator.onStatusChanged = function (s) {
-                    if (s === Component.Ready)
-                        id_page_pop_helper.inputPageCreated(incubator.object);
-                };
-            } else {
-                id_page_pop_helper.inputPageCreated(incubator.object);
-            }
-        }
+        _ensureKeyboardPage(true);
     }
 
     function handleUserSend(content) {
@@ -566,6 +825,7 @@ YPage {
                 "isComplete": true,
                 "isThinking": false,
                 "raw_text": content,
+                "reasoning_text": "",
                 "isToolCall": false,
                 "toolCallId": "",
                 "toolState": "",
@@ -616,9 +876,7 @@ YPage {
                     }
                 } catch (e) {}
             }
-            Qt.callLater(function () {
-                id_chat_listview.scrollToBottom();
-            });
+            _followLatestMessage();
         }
 
         if (fileItems.length === 0) {
@@ -727,9 +985,18 @@ YPage {
     function navigateToMessageIndex(msgIndex) {
         if (msgIndex < 0 || msgIndex >= chatModel.count)
             return;
-        id_chat_listview.positionViewAtIndex(msgIndex, ListView.Beginning);
+        id_navigation_target_expiry_timer.stop();
+        id_message_jump_timer.stop();
+        _pendingJumpIndex = msgIndex;
+        _navigationTargetIndex = msgIndex;
+        _navigationJumping = true;
+        _jumpAttempts = 0;
+        _jumpStableFrames = 0;
         id_chat_listview.currentIndex = msgIndex;
-        highlightTimer.restart();
+        id_chat_listview._programmaticScroll = true;
+        id_chat_listview.positionViewAtIndex(msgIndex, ListView.Beginning);
+        id_chat_listview._programmaticScroll = false;
+        id_message_jump_timer.restart();
     }
 
     function editMessage(index) {
@@ -780,28 +1047,6 @@ YPage {
         anchors.fill: parent
         isShowing: qmlGlobal.inputPageShowing
         objectName: "from_ChatAssistant.qml"
-
-        function inputPageCreated(keyboardPage) {
-            id_chat_assistant_page.keyboardPageRef = keyboardPage;
-            keyboardPage.backButtonClicked.connect(function () {
-                id_chat_assistant_page.keyboardPageRef = null;
-                qmlGlobal.inputPageShowing = false;
-                keyboardPage.todoDestroy();
-                if (typeof keyBoard !== 'undefined' && keyBoard !== null)
-                    keyBoard.autoSendScan = keyBoard.autoSendScanConfig;
-            });
-            keyboardPage.inputFinished.connect(function (content) {
-                id_chat_assistant_page.keyboardPageRef = null;
-                if (typeof keyBoard !== 'undefined' && keyBoard !== null)
-                    keyBoard.autoSendScan = keyBoard.autoSendScanConfig;
-                if (content && content.trim().length > 0)
-                    handleUserSend(content.trim());
-            });
-            keyboardPage.placeHolderText = "输入消息...";
-            keyboardPage.enterText(messageContent);
-            keyboardPage.show();
-            qmlGlobal.inputPageShowing = true;
-        }
     }
 
     Item {
@@ -826,7 +1071,9 @@ YPage {
                 clip: true
                 model: chatModel
                 spacing: 10
-                cacheBuffer: 200
+                // Retain several long neighbors; rich delegates outside the preload window stay lightweight.
+                cacheBuffer: Math.min(2400, Math.max(1600, Math.round(height * 10)))
+                reuseItems: true
 
                 add: Transition {
                     enabled: !id_chat_assistant_page.isGenerating && !id_chat_assistant_page._layoutStabilizing
@@ -853,16 +1100,38 @@ YPage {
                 readonly property real bottomThreshold: 50
 
                 onMovementStarted: {
-                    if (!_programmaticScroll)
+                    if (!_programmaticScroll) {
                         _flicking = true;
+                        if (id_rich_content_anchor_timer.running)
+                            id_rich_content_anchor_timer.stop();
+                        if (_navigationTargetIndex >= 0) {
+                            _navigationTargetIndex = -1;
+                            _navigationJumping = false;
+                            _pendingJumpIndex = -1;
+                            id_navigation_target_expiry_timer.stop();
+                        }
+                        if (id_follow_latest_timer.running)
+                            id_follow_latest_timer.stop();
+                        if (_layoutStabilizing) {
+                            _layoutStabilizing = false;
+                            id_layout_stabilize_timer.stop();
+                        }
+                    }
                 }
                 onMovementEnded: {
                     _flicking = false;
                     updateUserScrolledState();
+                    id_list_bounds_guard_timer.restart();
                 }
                 onContentYChanged: {
                     if (_programmaticScroll)
                         return;
+                    if (id_chat_assistant_page._navigationTargetIndex >= 0 && (moving || _flicking)) {
+                        id_chat_assistant_page._navigationTargetIndex = -1;
+                        id_chat_assistant_page._navigationJumping = false;
+                        id_chat_assistant_page._pendingJumpIndex = -1;
+                        id_message_jump_timer.stop();
+                    }
                     if (!_flicking && !moving)
                         return;
                     updateUserScrolledState();
@@ -875,17 +1144,46 @@ YPage {
                         hasNewMessages = false;
                 }
 
-                function scrollToBottom() {
+                function scrollToTop() {
+                    id_bottom_scroll_animation.stop();
                     _programmaticScroll = true;
-                    positionViewAtEnd();
+                    positionViewAtBeginning();
                     _programmaticScroll = false;
                     userScrolledUp = false;
                     hasNewMessages = false;
                 }
 
+                function scrollToBottom(animated) {
+                    id_bottom_scroll_animation.stop();
+                    var targetY = Math.max(originY, originY + contentHeight - height);
+                    if (animated && Math.abs(targetY - contentY) > 1) {
+                        _programmaticScroll = true;
+                        id_bottom_scroll_animation.from = contentY;
+                        id_bottom_scroll_animation.to = targetY;
+                        id_bottom_scroll_animation.start();
+                    } else {
+                        _programmaticScroll = true;
+                        positionViewAtEnd();
+                        _programmaticScroll = false;
+                    }
+                    userScrolledUp = false;
+                    hasNewMessages = false;
+                }
+
+                NumberAnimation {
+                    id: id_bottom_scroll_animation
+                    target: id_chat_listview
+                    property: "contentY"
+                    duration: 90
+                    easing.type: Easing.OutQuad
+                    onStopped: id_chat_listview._programmaticScroll = false
+                }
+
                 onContentHeightChanged: {
                     if (_layoutStabilizing)
                         id_layout_stabilize_timer.restart();
+                    if (!moving && !id_rich_content_anchor_timer.running)
+                        id_list_bounds_guard_timer.restart();
                 }
 
                 footer: Item {
@@ -924,16 +1222,41 @@ YPage {
                 delegate: MessageDelegate {
                     text: model.text
                     rawText: model.raw_text
+                    reasoningText: model.reasoning_text || ""
                     isUser: model.isUser
                     isComplete: model.isComplete
                     isThinking: model.isThinking
+                    isReasoning: model.isReasoning || false
                     isToolCall: model.isToolCall
                     toolState: model.toolState
                     mathServerAvailable: id_chat_assistant_page.mathServerAvailable
+                    textureCacheEnabled: id_chat_assistant_page.bubbleTextureCacheEnabled
+                    renderMode: chatbot.bubbleRenderMode
+                    listMoving: id_chat_listview.moving
+                    navigationJumping: id_chat_assistant_page._navigationJumping
                     messageIndex: model.index
                     listWidth: id_chat_listview.width
+                    listContentY: id_chat_listview.contentY
+                    listViewportHeight: id_chat_listview.height
+                    richPreloadMargin: id_chat_listview.height * 2
                     fontFamily: qmlGlobal.fontFamilyZhCn
                     onLongPressed: id_context_menu.showMenu(globalX, globalY, msgIndex)
+                    onToolCardExpansionStarted: {
+                        if (expanding)
+                            id_tool_expansion_anchor_timer.preserveViewport();
+                    }
+                    onRichContentCommitStarted: function (itemY) {
+                        if (id_chat_assistant_page._navigationTargetIndex >= 0) {
+                            id_chat_assistant_page._pendingJumpIndex = id_chat_assistant_page._navigationTargetIndex;
+                            id_chat_assistant_page._jumpAttempts = 0;
+                            id_chat_assistant_page._jumpStableFrames = 0;
+                            id_chat_assistant_page._navigationJumping = true;
+                            id_navigation_target_expiry_timer.stop();
+                            id_message_jump_timer.restart();
+                        } else {
+                            id_chat_assistant_page._beginRichContentCommit();
+                        }
+                    }
                 }
             }
         }
@@ -1197,9 +1520,23 @@ YPage {
                 right: parent.right
             }
             z: 200
+            messageModel: chatModel
+            fontFamily: qmlGlobal.fontFamilyZhCn
 
             onNavigateToMessage: navigateToMessageIndex(messageIndex)
             onCloseRequested: close()
+        }
+    }
+
+    Timer {
+        id: id_navigation_target_expiry_timer
+        interval: 1200
+        repeat: false
+        onTriggered: {
+            _navigationTargetIndex = -1;
+            _navigationJumping = false;
+            _pendingJumpIndex = -1;
+            id_message_jump_timer.stop();
         }
     }
 
@@ -1211,10 +1548,173 @@ YPage {
     }
 
     Timer {
+        id: id_rich_content_anchor_timer
+        property int anchorIndex: -1
+        property real anchorOffset: 0
+        property bool pinBottom: false
+        property int ticks: 0
+        property int stableFrames: 0
+        property real lastContentHeight: -1
+        interval: 16
+        repeat: true
+
+        function beginTracking() {
+            ticks = 0;
+            stableFrames = 0;
+            lastContentHeight = -1;
+            restart();
+        }
+
+        onTriggered: {
+            if (id_chat_listview.moving) {
+                stop();
+                anchorIndex = -1;
+                return;
+            }
+            var minY = id_chat_listview.originY;
+            var maxY = Math.max(minY, minY + id_chat_listview.contentHeight - id_chat_listview.height);
+            var currentY = isFinite(id_chat_listview.contentY) ? id_chat_listview.contentY : minY;
+            var targetY = Math.max(minY, Math.min(currentY, maxY));
+            if (pinBottom) {
+                targetY = maxY;
+            } else if (anchorIndex >= 0) {
+                var anchorItem = id_chat_listview.itemAtIndex(anchorIndex);
+                if (anchorItem)
+                    targetY = Math.max(minY, Math.min(anchorItem.y - anchorOffset, maxY));
+            }
+            id_chat_listview._programmaticScroll = true;
+            id_chat_listview.contentY = targetY;
+            id_chat_listview._programmaticScroll = false;
+
+            var currentHeight = id_chat_listview.contentHeight;
+            if (lastContentHeight >= 0 && Math.abs(currentHeight - lastContentHeight) <= 1)
+                stableFrames++;
+            else
+                stableFrames = 0;
+            lastContentHeight = currentHeight;
+            ticks++;
+            if ((ticks >= 10 && stableFrames >= 3) || ticks >= 30) {
+                stop();
+                anchorIndex = -1;
+                id_list_bounds_guard_timer.restart();
+            }
+        }
+    }
+
+    Timer {
+        id: id_list_bounds_guard_timer
+        interval: 0
+        repeat: false
+        onTriggered: {
+            if (id_chat_listview.moving || id_rich_content_anchor_timer.running)
+                return;
+            id_chat_listview.forceLayout();
+            var minY = id_chat_listview.originY;
+            var maxY = Math.max(minY, minY + id_chat_listview.contentHeight - id_chat_listview.height);
+            var currentY = isFinite(id_chat_listview.contentY) ? id_chat_listview.contentY : minY;
+            var boundedY = Math.max(minY, Math.min(currentY, maxY));
+            if (!isFinite(id_chat_listview.contentY) || Math.abs(boundedY - id_chat_listview.contentY) > 0.5) {
+                id_chat_listview._programmaticScroll = true;
+                id_chat_listview.contentY = boundedY;
+                id_chat_listview._programmaticScroll = false;
+            }
+            id_chat_listview.returnToBounds();
+        }
+    }
+
+    Timer {
+        id: id_tool_expansion_anchor_timer
+        property real anchorContentY: 0
+        property int ticks: 0
+        interval: 20
+        repeat: true
+
+        function preserveViewport() {
+            anchorContentY = id_chat_listview.contentY;
+            ticks = 0;
+            restart();
+        }
+
+        onTriggered: {
+            id_chat_listview.forceLayout();
+            var maxY = Math.max(id_chat_listview.originY,
+                                id_chat_listview.originY + id_chat_listview.contentHeight - id_chat_listview.height);
+            id_chat_listview._programmaticScroll = true;
+            id_chat_listview.contentY = Math.max(id_chat_listview.originY, Math.min(anchorContentY, maxY));
+            id_chat_listview._programmaticScroll = false;
+            ticks++;
+            if (ticks >= 10)
+                stop();
+        }
+    }
+
+    Timer {
+        id: id_follow_latest_timer
+        interval: 20
+        repeat: true
+        onTriggered: {
+            id_chat_listview.forceLayout();
+            id_chat_listview.scrollToBottom();
+            _followAttempts++;
+
+            var sameHeight = Math.abs(id_chat_listview.contentHeight - _followLastContentHeight) <= 1;
+            var targetY = Math.max(id_chat_listview.originY,
+                                   id_chat_listview.originY + id_chat_listview.contentHeight - id_chat_listview.height);
+            var atBottom = Math.abs(targetY - id_chat_listview.contentY) <= 1;
+            _followStableFrames = sameHeight && atBottom ? _followStableFrames + 1 : 0;
+            _followLastContentHeight = id_chat_listview.contentHeight;
+            if ((_followAttempts >= 8 && _followStableFrames >= 3) || _followAttempts >= 25)
+                stop();
+        }
+    }
+
+    Timer {
+        id: id_message_jump_timer
+        interval: 20
+        repeat: true
+        onTriggered: {
+            var index = _pendingJumpIndex;
+            if (index < 0 || index >= chatModel.count) {
+                stop();
+                _pendingJumpIndex = -1;
+                _navigationTargetIndex = -1;
+                _navigationJumping = false;
+                return;
+            }
+
+            id_chat_listview.forceLayout();
+            id_chat_listview._programmaticScroll = true;
+            id_chat_listview.positionViewAtIndex(index, ListView.Beginning);
+            id_chat_listview._programmaticScroll = false;
+            _jumpAttempts++;
+
+            var targetItem = id_chat_listview.itemAtIndex(index);
+            var expectedY = targetItem !== null
+                          ? ChatNavigation.clampedTargetY(id_chat_listview.originY,
+                                                          id_chat_listview.contentHeight,
+                                                          id_chat_listview.height,
+                                                          targetItem.y)
+                          : id_chat_listview.originY;
+            var aligned = targetItem !== null && Math.abs(expectedY - id_chat_listview.contentY) <= 1;
+            _jumpStableFrames = aligned ? _jumpStableFrames + 1 : 0;
+            if (_jumpStableFrames >= 2 || _jumpAttempts >= 40) {
+                stop();
+                _pendingJumpIndex = -1;
+                _navigationJumping = false;
+                id_navigation_target_expiry_timer.restart();
+                highlightTimer.restart();
+            }
+        }
+    }
+
+    Timer {
         id: generationDoneTimer
         interval: 200
         repeat: false
-        onTriggered: id_chat_assistant_page.isGenerating = false
+        onTriggered: {
+            id_chat_assistant_page.isGenerating = false;
+            consumePendingVoiceChat();
+        }
     }
 
     Timer {
@@ -1224,7 +1724,7 @@ YPage {
         onTriggered: {
             if (_layoutStabilizing) {
                 id_chat_listview.forceLayout();
-                id_chat_listview.scrollToBottom();
+                id_chat_listview.scrollToTop();
                 _layoutStabilizing = false;
             }
         }
@@ -1307,35 +1807,61 @@ YPage {
     }
 
     Connections {
+        target: mod
+        function onPendingVoiceChatTextChanged() {
+            if (id_chat_assistant_page.visible)
+                Qt.callLater(consumePendingVoiceChat);
+        }
+    }
+
+    Connections {
         target: chatbot
         ignoreUnknownSignals: true
 
-        onMessageReceived: {
+        function onMessageReceived(content, isComplete) {
             _toolCallActive = false;
+            _completeLastReasoningCard();
             if (isComplete && !streamThrottle.endProcessed) {
                 var lastIndex = chatModel.count - 1;
-                if (lastIndex >= 0) {
-                    var item = chatModel.get(lastIndex);
-                    if (!item.isUser && !item.isToolCall) {
-                        chatModel.set(lastIndex, {
-                            "text": chatbot.markdownToHtml(content),
-                            "raw_text": content,
-                            "isComplete": true,
-                            "isThinking": false
-                        });
-                    }
-                }
+                if (lastIndex < 0 || chatModel.get(lastIndex).isUser
+                        || chatModel.get(lastIndex).isToolCall || chatModel.get(lastIndex).isReasoning)
+                    lastIndex = _appendAnswerPlaceholder();
+                chatModel.set(lastIndex, {
+                    "text": "",
+                    "raw_text": content,
+                    "isComplete": true,
+                    "isThinking": false,
+                    "isReasoning": false
+                });
                 generationDoneTimer.restart();
             }
         }
-        onStreamChunk: {
+        function onReasoningChunk(content) {
+            var lastIndex = chatModel.count - 1;
+            if (lastIndex >= 0 && chatModel.get(lastIndex).isReasoning) {
+                chatModel.setProperty(lastIndex, "raw_text", chatModel.get(lastIndex).raw_text + content);
+                return;
+            }
+            if (lastIndex >= 0 && chatModel.get(lastIndex).isThinking)
+                chatModel.remove(lastIndex);
+            chatModel.append(_makeReasoningEntry(content));
+            _scheduleScrollToBottom();
+        }
+        function onStreamChunk(content) {
             streamThrottle.endProcessed = false;
+            _completeLastReasoningCard();
             var lastIndex = chatModel.count - 1;
             if (lastIndex < 0)
                 return;
             var item = chatModel.get(lastIndex);
             if (item.isUser)
                 return;
+            if (item.isToolCall || item.isReasoning || item.isComplete) {
+                lastIndex = _appendAnswerPlaceholder();
+                item = chatModel.get(lastIndex);
+            }
+            // Keep the thinking bubble until the buffered first chunk is committed.
+            // _flushStreamBuffer() switches the state and text in one model update.
             if (streamThrottle.lastIndex >= 0 && streamThrottle.lastIndex !== lastIndex)
                 _flushStreamBuffer();
             streamThrottle.content += content;
@@ -1343,22 +1869,23 @@ YPage {
             if (!throttlingTimer.running)
                 throttlingTimer.start();
         }
-        onStreamStart: {
+        function onStreamStart() {
             _toolCallActive = false;
         }
-        onStreamEnd: {
+        function onStreamEnd() {
             throttlingTimer.stop();
+            _completeLastReasoningCard();
             _flushStreamBuffer();
             var lastIndex = chatModel.count - 1;
             if (lastIndex >= 0) {
                 var item = chatModel.get(lastIndex);
-                if (!item.isUser && !item.isToolCall) {
+                if (!item.isUser && !item.isToolCall && !item.isReasoning) {
                     if (item.isThinking && item.raw_text === "") {
                         return;
                     }
                     var rawContent = item.raw_text;
                     chatModel.set(lastIndex, {
-                        "text": chatbot.markdownToHtml(rawContent),
+                        "text": "",
                         "raw_text": rawContent,
                         "isComplete": true,
                         "isThinking": false
@@ -1370,7 +1897,8 @@ YPage {
                 generationDoneTimer.restart();
             streamThrottle.endProcessed = true;
         }
-        onErrorOccurred: {
+        function onErrorOccurred(error) {
+            _completeLastReasoningCard();
             _resetStreamState();
             _preparingSend = false;
             _toolCallActive = false;
@@ -1379,23 +1907,34 @@ YPage {
             if (lastIndex >= 0 && chatModel.get(lastIndex).isThinking)
                 chatModel.remove(lastIndex);
             id_chat_assistant_page.isGenerating = false;
+            Qt.callLater(consumePendingVoiceChat);
         }
-        onToolCallReceived: {
+        function onToolCallProgress(text, isComplete) {
             generationDoneTimer.stop();
+            _completeLastReasoningCard();
+            _toolCallActive = !isComplete;
             finalizeLastAssistantIfNeeded();
-            replaceThinkingOrAppend(_makeToolCardEntry("", "done", "⚙️ 调用工具中...", toolCallsJson, true));
+            _upsertToolEntry("__server__", text, "", isComplete ? "done" : "searching", isComplete);
         }
-        onTavilySearchStarted: {
+        function onToolCallReceived(toolCallsJson) {
+            generationDoneTimer.stop();
+            _completeLastReasoningCard();
+            finalizeLastAssistantIfNeeded();
+            var lastIndex = chatModel.count - 1;
+            if (lastIndex >= 0 && chatModel.get(lastIndex).isThinking)
+                chatModel.remove(lastIndex);
+        }
+        function onTavilySearchStarted(toolCallId, query) {
             generationDoneTimer.stop();
             _toolCallActive = true;
             id_chat_assistant_page.isGenerating = true;
             finalizeLastAssistantIfNeeded();
-            replaceThinkingOrAppend(_makeToolCardEntry(toolCallId, "searching", "正在搜索：" + query, "", false));
+            _upsertToolEntry(toolCallId, "正在搜索：" + query, "", "searching", false);
             Qt.callLater(function () {
                 id_chat_listview.scrollToBottom();
             });
         }
-        onTavilySearchFinished: {
+        function onTavilySearchFinished(toolCallId, success, summary, resultText) {
             updateCardByToolCallId(toolCallId, {
                 "text": success ? "已完成搜索：" + summary : "搜索失败：" + summary,
                 "raw_text": resultText,
@@ -1403,18 +1942,18 @@ YPage {
                 "isComplete": true
             });
         }
-        onShellCommandPending: {
+        function onShellCommandPending(toolCallId, command) {
             generationDoneTimer.stop();
             _toolCallActive = true;
             id_chat_assistant_page.isGenerating = true;
             finalizeLastAssistantIfNeeded();
-            replaceThinkingOrAppend(_makeToolCardEntry(toolCallId, "pending", "请求执行：" + command, command, false));
+            _upsertToolEntry(toolCallId, "请求执行：" + command, command, "pending", false);
             Qt.callLater(function () {
                 id_chat_listview.scrollToBottom();
             });
             shellConfirmDialog.show(toolCallId, command);
         }
-        onShellCommandStarted: {
+        function onShellCommandStarted(toolCallId, command) {
             _toolCallActive = true;
             id_chat_assistant_page.isGenerating = true;
             updateCardByToolCallId(toolCallId, {
@@ -1422,7 +1961,7 @@ YPage {
                 "toolState": "searching"
             });
         }
-        onShellCommandFinished: {
+        function onShellCommandFinished(toolCallId, success, summary, resultText) {
             updateCardByToolCallId(toolCallId, {
                 "text": success ? "执行完成" : "执行失败：" + summary,
                 "raw_text": resultText,
@@ -1430,7 +1969,7 @@ YPage {
                 "isComplete": true
             });
         }
-        onToolBatchFlushed: {
+        function onToolBatchFlushed() {
             generationDoneTimer.stop();
             chatModel.append({
                 "text": "AI 正在思考...",
@@ -1447,7 +1986,8 @@ YPage {
                 id_chat_listview.scrollToBottom();
             });
         }
-        onRequestCancelled: {
+        function onRequestCancelled() {
+            _completeLastReasoningCard();
             _resetStreamState();
             _toolCallActive = false;
             _attachmentReadSeq++;
@@ -1470,8 +2010,9 @@ YPage {
             for (var ri = 0; ri < removeIndices.length; ri++)
                 chatModel.remove(removeIndices[ri]);
             id_chat_assistant_page.isGenerating = false;
+            Qt.callLater(consumePendingVoiceChat);
         }
-        onSessionSwitched: {
+        function onSessionSwitched(sessionId) {
             historyLoaded = false;
             loadHistory();
             historyLoaded = true;
@@ -1561,7 +2102,7 @@ YPage {
         target: systemBase
         ignoreUnknownSignals: true
         function onOcrStart() {
-            if (typeof keyBoard !== 'undefined' && (keyBoard.autoSendScan || qmlGlobal.inputPageShowing))
+            if (mod.voiceChatEnabled)
                 return;
             backButtonClicked();
         }
@@ -1587,7 +2128,8 @@ YPage {
                 keyBoard.autoSendScan = keyBoard.autoSendScanConfig;
         }
         function onScanFinished(content) {
-            if (captureModeActive || keyboardPageRef || qmlGlobal.inputPageShowing)
+            if (captureModeActive || (keyboardPageRef && keyboardPageRef.visible)
+                    || qmlGlobal.inputPageShowing || id_pop_container.count > 0)
                 return;
             if (content && content.trim().length > 0 && id_chat_assistant_page.visible) {
                 if (typeof qmlGlobal.hideDictPage === 'function')

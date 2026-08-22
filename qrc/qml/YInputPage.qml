@@ -16,6 +16,8 @@ YPage {
     property bool isPinyinMode: false
 
     property int currentPinyinLen: 0
+    property bool voiceInputActive: false
+    property string lastVoiceResult: ""
 
     RimeWrapper {
         id: id_rime_backend
@@ -65,6 +67,45 @@ YPage {
     function selectCandidate(index, text) {
         console.log("选中候选词索引: " + index + ", 内容: " + text);
         id_rime_backend.selectCandidate(index);
+    }
+
+    function toggleVoiceInput() {
+        if (speechManager.recognizing === YEnum.AS_ASRBegin) {
+            keyBoard.stopVoiceInput(speechManager);
+            return;
+        }
+
+        lastVoiceResult = "";
+        voiceInputActive = keyBoard.startVoiceInput(speechManager);
+        if (!voiceInputActive)
+            qmlGlobal.showToast("语音输入启动失败", YColors.grayNormal);
+    }
+
+    function acceptVoiceResult(text) {
+        if (!voiceInputActive || text.length === 0 || text === lastVoiceResult)
+            return;
+
+        if (isPinyinMode && currentPinyinLen > 0) {
+            for (var i = 0; i < currentPinyinLen; i++)
+                id_input_text_title_area.delChar();
+            id_rime_backend.clear();
+            id_candidate_model.clear();
+            currentPinyinLen = 0;
+        }
+
+        lastVoiceResult = text;
+        voiceInputActive = false;
+        id_input_text_title_area.enterChar(text);
+    }
+
+    function resetInput(text) {
+        isPinyinMode = false;
+        id_rime_backend.clear();
+        id_candidate_model.clear();
+        currentPinyinLen = 0;
+        id_input_text_title_area.clear();
+        if (text && text.length > 0)
+            id_input_text_title_area.enterChar(text);
     }
 
     function enterText(text) {
@@ -279,6 +320,9 @@ YPage {
             onRequestTogglePinyin: {
                 togglePinyinMode();
             }
+            onRequestVoiceInput: {
+                toggleVoiceInput();
+            }
         }
 
         YInputTextLowerChars {
@@ -341,8 +385,22 @@ YPage {
         }
     }
 
+    Connections {
+        target: speechManager
+        ignoreUnknownSignals: true
+        enabled: id_input_page.visible
+        onAsrResultChanged: {
+            acceptVoiceResult(speechManager.asrResult.trim());
+        }
+        onRecognizingChanged: {
+            if (voiceInputActive && speechManager.recognizing === 0
+                    && speechManager.asrResult.trim().length === 0)
+                voiceInputActive = false;
+        }
+    }
+
     Component.onCompleted: {
-        if (typeof keyBoard !== 'undefined' && keyBoard !== null) {
+        if (visible && typeof keyBoard !== 'undefined' && keyBoard !== null) {
             keyBoard.inputPageShowing = true;
             keyBoard.autoSendScan = false;
         }
@@ -360,6 +418,10 @@ YPage {
             }
         }
         if (!visible) {
+            if (voiceInputActive || speechManager.recognizing === YEnum.AS_ASRBegin)
+                keyBoard.stopVoiceInput(speechManager);
+            voiceInputActive = false;
+            lastVoiceResult = "";
             isPinyinMode = false;
             id_rime_backend.clear();
             id_candidate_model.clear();

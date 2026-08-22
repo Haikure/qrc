@@ -53,7 +53,7 @@ YSettingItemPage {
                 imageName: "settings/info_more_arrow"
                 value: batteryInfo.autoSuspendDuration
                 onClicked: {
-                    id_pop_container.show("AutoSuspendSetting")
+                    openSettingPage("AutoSuspendSetting")
                 }
             }
 
@@ -79,17 +79,4 @@ YSettingItemPage {
         onTriggered: batteryInfo.update()
     }
 
-    YDynamicPageStack {
-        id: id_pop_container
-        anchors.fill: parent
-        logTag: "BatteryInfoPage"
-
-        function show(page) {
-            createPage(Qt.resolvedUrl(("./%1.qml").arg(page)), page, {
-                "pageIndex": YEnum.PageIndex.Setting,
-                "closeOnHomeRelease": true,
-                "closeOnHomeLongPress": true
-            })
-        }
-    }
 }

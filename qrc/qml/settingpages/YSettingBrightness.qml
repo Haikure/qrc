@@ -76,7 +76,7 @@ YSettingItemPage {
                 imageName: "settings/info_more_arrow"
                 value: screenManager.autoSleepDuration
                 onClicked: {
-                    id_pop_container.show("AutoScreenOffSetting")
+                    openSettingPage("AutoScreenOffSetting")
                 }
             }
 
@@ -102,20 +102,6 @@ YSettingItemPage {
 
         }
 
-    }
-
-    YDynamicPageStack {
-        id: id_pop_container
-        anchors.fill: parent
-        logTag: "YSettingBrightness"
-
-        function show(aboutPage) {
-            createPage(Qt.resolvedUrl(("./%1.qml").arg(aboutPage)), aboutPage, {
-                "pageIndex": YEnum.PageIndex.Setting,
-                "closeOnHomeRelease": true,
-                "closeOnHomeLongPress": true
-            })
-        }
     }
 
 }

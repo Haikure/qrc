@@ -30,6 +30,7 @@ YBackButtonAudioPage {
 
             YAudioPageDomainButton {
                 id: id_my_imports_button
+                visible: !antiEmbs.active
                 name: "文件管理"
                 count: "Beta"
                 imageName: "audiopage/my_imports"

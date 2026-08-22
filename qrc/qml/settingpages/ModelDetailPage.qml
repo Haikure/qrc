@@ -30,6 +30,7 @@ YBackButtonPage {
             "provider":       modelData.provider    || "",
             "endpoint":       modelData.endpoint    || "",
             "modelId":        modelData.modelId     || "",
+            "apiProtocol":    modelData.apiProtocol === "responses" ? "responses" : "chat_completions",
             "apiKey":         modelData.apiKey      || "",
             "temperature":    modelData.temperature !== undefined ? String(modelData.temperature) : "0.7",
             "maxContextSize": modelData.maxContextSize || 0,
@@ -38,6 +39,7 @@ YBackButtonPage {
             "capAudio":       cap.audio     || false,
             "capToolCall":    cap.toolCall  || false,
             "capReasoning":   cap.reasoning || false,
+            "reasoningEffort": modelData.reasoningEffort || "",
             "extraParams":    modelData.extraParams ? JSON.stringify(modelData.extraParams) : "",
             "proxyVisionModelId":  modelData.proxyVisionModelId  || "",
             "proxyVisionPrompt":   modelData.proxyVisionPrompt   || ""
@@ -75,9 +77,11 @@ YBackButtonPage {
             "provider":       fd.provider || "",
             "endpoint":       fd.endpoint,
             "modelId":        fd.modelId,
+            "apiProtocol":    fd.apiProtocol,
             "apiKey":         fd.apiKey || "",
             "temperature":    parseFloat(fd.temperature) || 0.7,
             "maxContextSize": fd.maxContextSize || 0,
+            "reasoningEffort": fd.capReasoning ? fd.reasoningEffort : "",
             "capabilities": {
                 "text":      fd.capText,
                 "vision":    fd.capVision,
@@ -102,6 +106,18 @@ YBackButtonPage {
 
     function generateId(name) {
         return name.toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "model";
+    }
+
+    function reasoningEffortLabel(value) {
+        var labels = { "": "默认", "none": "关闭", "minimal": "极低", "low": "低", "medium": "中", "high": "高", "xhigh": "极高" };
+        return labels[value] || "默认";
+    }
+
+    function cycleReasoningEffort() {
+        var values = ["", "none", "minimal", "low", "medium", "high", "xhigh"];
+        var index = values.indexOf(fd.reasoningEffort);
+        fd.reasoningEffort = values[(index + 1) % values.length];
+        fd = fd;
     }
 
     property var visionModelList: []
@@ -255,6 +271,23 @@ YBackButtonPage {
                 onClicked: openKeyboard("modelId", "请输入模型 ID")
             }
 
+            DescribedSwitchItem {
+                title: "Responses API"
+                description: "使用 /responses 协议"
+                switchOn: fd.apiProtocol === "responses"
+                interval: 0
+                onTimerTriggered: {
+                    var chatEndpoint = "https://api.deepseek.com/v1/chat/completions";
+                    var responsesEndpoint = "https://api.deepseek.com/v1/responses";
+                    if (switchOn && fd.endpoint === chatEndpoint)
+                        fd.endpoint = responsesEndpoint;
+                    else if (!switchOn && fd.endpoint === responsesEndpoint)
+                        fd.endpoint = chatEndpoint;
+                    fd.apiProtocol = switchOn ? "responses" : "chat_completions";
+                    fd = fd;
+                }
+            }
+
             DescribedClickableTextBox {
                 title: "API 密钥"
                 describe: fd.apiKey ? "●".repeat(Math.min(fd.apiKey.length, 12)) : "点击输入身份验证密钥"
@@ -339,10 +372,19 @@ YBackButtonPage {
 
             DescribedSwitchItem {
                 title: "推理（Reasoning）"
-                description: "支持思维链推理模式"
+                description: "支持推理摘要与深度控制"
                 switchOn: fd.capReasoning
                 interval: 0
                 onTimerTriggered: { fd.capReasoning = switchOn; fd = fd; }
+            }
+
+            DescribedClickableTextBox {
+                title: "推理深度"
+                describe: reasoningEffortLabel(fd.reasoningEffort)
+                describeItem.color: fd.reasoningEffort ? YColors.textColor : YColors.grayText
+                visible: fd.capReasoning
+                opacityChangableWhenPressed: false
+                onClicked: cycleReasoningEffort()
             }
 
             // ─── 视觉代理设置（仅 Vision 关闭时显示）────

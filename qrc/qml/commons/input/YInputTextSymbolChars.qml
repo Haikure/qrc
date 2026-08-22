@@ -1,4 +1,5 @@
 import QtQuick 2.12
+import com.youdao.pen 1.0
 import "qrc:/qml/commons"
 
 YInputTextCharsModelBase {
