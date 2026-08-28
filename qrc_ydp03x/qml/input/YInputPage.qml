@@ -41,7 +41,7 @@ YPage {
     property int currentPinyinLen: 0
 
     // ---------- 几何 ----------
-    readonly property int keyH: 34
+    readonly property int keyH: 42
     readonly property int keyW: 74
     readonly property int keySpacing: 4
 
@@ -101,7 +101,6 @@ YPage {
         } else {
             id_input_text_title_area.enterChar(text);
         }
-        followBottomIfNeeded();
     }
 
     function selectCandidate(index) {
@@ -131,7 +130,6 @@ YPage {
             currentPinyinLen = 0;
         }
         id_input_text_title_area.enterChar('\n');
-        followBottomIfNeeded();
     }
 
     function spaceKey() {
@@ -140,29 +138,11 @@ YPage {
         } else {
             id_input_text_title_area.enterChar(' ');
         }
-        followBottomIfNeeded();
     }
 
     function switchInputStatus(status) {
         currentInputStatus = status;
         YInputProperty.currentInputStatus = status;
-        followBottomIfNeeded();
-    }
-
-    // 输入区变高/键盘模式变化时，若当前已滚到底部则跟随（保证键盘可见；用户上滑阅读时不打扰）
-    function followBottomIfNeeded() {
-        var flick = id_page_flick;
-        if (flick.contentY >= flick.contentHeight - flick.height - 8) {
-            flick.contentY = flick.contentHeight - flick.height;
-        }
-    }
-
-    function snapToBottom() {
-        var flick = id_page_flick;
-        flick.contentY = flick.contentHeight - flick.height;
-        if (flick.contentY < 0) {
-            flick.contentY = 0;
-        }
     }
 
     // ---------- 布局：整页纵向滚动 ----------
@@ -190,9 +170,6 @@ YPage {
                 id: id_input_text_title_area
                 anchors.left: parent.left
                 anchors.right: parent.right
-                onTextEdited: {
-                    id_input_page.followBottomIfNeeded();
-                }
                 onBacked: {
                     backButtonClicked();
                 }
@@ -683,8 +660,6 @@ YPage {
             if (initialText.length > 0) {
                 id_input_text_title_area.setInitialText(initialText);
             }
-            // 打开时定位到底部（键盘可见）
-            Qt.callLater(id_input_page.snapToBottom);
         } else {
             isPinyinMode = false;
             id_rime_backend.clear();

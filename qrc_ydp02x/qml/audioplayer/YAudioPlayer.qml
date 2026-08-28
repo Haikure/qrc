@@ -101,8 +101,8 @@ Item {
         cleanupInternal()
         visible = false
         playStatePauseConfirm()
-        // 隐藏时释放音频引用（完全退出播放界面）
-        musicPlayer.releaseAudio()
+        // 扫描导致页面切换时保留暂停会话，其他隐藏场景正常释放音频引用
+        musicPlayer.releaseAudioAfterHide()
     }
 
     function raise() {

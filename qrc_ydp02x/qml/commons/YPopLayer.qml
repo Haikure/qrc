@@ -10,7 +10,6 @@ YBasePopLayer {
     property var _preloadRequests: ({})
     property var _connectedItem: null
     property var _backCallback: null
-    property real compatibilityPageZ: 5000
     property var _destructionCallback: null
 
     function _propertiesFromArguments(propertiesOrCache, legacyProperties) {
@@ -101,7 +100,7 @@ YBasePopLayer {
 
         _applyProperties(item, properties);
         if (item.hasOwnProperty("z"))
-            item.z = compatibilityPageZ + count;
+            item.z = YUtils.nextVisualZ();
         if (item.hasOwnProperty("animationEnabled")) {
             item.animationEnabled = animationEnabled !== false;
         }

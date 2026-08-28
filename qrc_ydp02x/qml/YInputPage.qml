@@ -413,7 +413,6 @@ YPage {
                 keyBoard.inputPageShowing = true;
                 keyBoard.autoSendScan = false;
             } else {
-                keyBoard.autoSendScan = keyBoard.autoSendScanConfig;
                 keyBoard.inputPageShowing = false;
             }
         }

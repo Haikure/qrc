@@ -62,7 +62,7 @@ Item {
         anchors.fill: parent
         visible: root.transitionRunning
         enabled: visible
-        z: 10000
+        z: YUtils.visualZSequence + 1
         onPressed: mouse.accepted = true
         onReleased: mouse.accepted = true
         onClicked: mouse.accepted = true
@@ -316,7 +316,8 @@ Item {
     function _showItem(entry, resumed) {
         _setManaged(entry.item, true);
         _visualSequence += 1;
-        entry.host.z = _visualSequence;
+        if (!resumed || YUtils.currentPopId.length === 0)
+            entry.host.z = YUtils.nextVisualZ();
         entry.host.visible = true;
         if (entry.item.hasOwnProperty("animationEnabled"))
             entry.item.animationEnabled = true;

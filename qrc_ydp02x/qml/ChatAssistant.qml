@@ -237,57 +237,6 @@ YPage {
         return false;
     }
 
-    function readTextFileAsync(filePath, callback) {
-        if (!isTextFile(filePath)) {
-            callback(null);
-            return;
-        }
-        var fileUrl = filePath.startsWith("file://") ? filePath : "file://" + filePath;
-        var xhr = new XMLHttpRequest();
-        var completed = false;
-        function finish(result) {
-            if (completed)
-                return;
-            completed = true;
-            callback(result);
-        }
-        xhr.open("GET", fileUrl, true);
-        xhr.timeout = 5000;
-        xhr.onload = function () {
-            if (xhr.status === 200 || xhr.status === 0) {
-                var text = xhr.responseText;
-                if (text.length > 1024 * 1024) {  // 1MB 限制
-                    console.warn("文件过大，已忽略:", filePath);
-                    finish(null);
-                } else {
-                    finish(text);
-                }
-            } else {
-                finish(null);
-            }
-        };
-        xhr.onerror = function () {
-            finish(null);
-        };
-        xhr.ontimeout = function () {
-            finish(null);
-        };
-        try {
-            xhr.send();
-        } catch (e) {
-            finish(null);
-        }
-    }
-
-    function _fileContextText(files) {
-        var context = "用户引用了以下文件作为代码审查/分析的上下文：\n\n";
-        for (var i = 0; i < files.length; i++) {
-            var file = files[i];
-            context += "---\n## 文件: " + file.path + "\n```" + file.language + "\n" + file.content + "\n```\n\n";
-        }
-        return context;
-    }
-
     function openInputPage(placeholder, prefill, onDone) {
         let component = qmlCreateComponent("YInputPage");
         if (Component.Ready === component.status) {
@@ -638,6 +587,8 @@ YPage {
         }
         for (var idx = 0; idx < history.length; idx++) {
             var m = history[idx];
+            if (m.role === 'system')
+                continue;
             if (m.role === 'tool') {
                 var toolName = toolNameMap[m.toolCallId] || "";
                 var label = toolName === "shell_exec" ? "命令执行结果" : "搜索结果";
@@ -654,8 +605,15 @@ YPage {
                     continue;
             }
             var isUser = m.role === 'user';
+            var messageAttachments = [];
+            var messageParts = m.parts || [];
+            for (var partIndex = 0; partIndex < messageParts.length; partIndex++) {
+                if (messageParts[partIndex].type === "image_url" || messageParts[partIndex].type === "file")
+                    messageAttachments.push(messageParts[partIndex]);
+            }
             chatModel.append({
                 "text": isUser ? m.content : "",
+                "attachmentsJson": JSON.stringify(messageAttachments),
                 "isUser": isUser,
                 "raw_text": m.content,
                 "reasoning_text": "",
@@ -764,20 +722,20 @@ YPage {
         }
 
         var mediaParts = [];
-        var mediaLabels = [];
         for (var mi = 0; mi < attachedMediaModel.count; mi++) {
             var mediaItem = attachedMediaModel.get(mi);
-            mediaLabels.push(mediaItem.label || mediaItem.type);
             if (mediaItem.type === "image_url")
                 mediaParts.push({
                     "type": "image_url",
-                    "url": mediaItem.url
+                    "url": mediaItem.url,
+                    "label": mediaItem.label || "图片"
                 });
             else if (mediaItem.type === "input_audio")
                 mediaParts.push({
                     "type": "input_audio",
                     "data": mediaItem.data,
-                    "format": mediaItem.format
+                    "format": mediaItem.format,
+                    "label": mediaItem.label || "音频"
                 });
         }
 
@@ -808,19 +766,35 @@ YPage {
             _preparingSend = false;
             var displayText = content;
             var filesJson = filesArray.length > 0 ? JSON.stringify(filesArray) : "";
-
-            if (filesArray.length > 0) {
-                var names = filesArray.map(function (f) {
-                    return f.name;
-                }).join(", ");
-                displayText = "📎 " + names + "\n\n" + content;
+            var nonImageLabels = [];
+            var messageAttachments = [];
+            for (var mediaIndex = 0; mediaIndex < mediaParts.length; mediaIndex++) {
+                if (mediaParts[mediaIndex].type === "image_url")
+                    messageAttachments.push({
+                        "type": "image_url",
+                        "source": mediaParts[mediaIndex].url,
+                        "localPath": "",
+                        "name": mediaParts[mediaIndex].label
+                    });
+                else
+                    nonImageLabels.push(mediaParts[mediaIndex].label);
             }
-            if (mediaParts.length > 0) {
-                displayText = (displayText ? displayText + "\n" : "") + mediaLabels.join(" | ");
-            }
+            if (nonImageLabels.length > 0)
+                displayText = (displayText ? displayText + "\n" : "") + nonImageLabels.join(" | ");
+            for (var fileIndex = 0; fileIndex < filesArray.length; fileIndex++)
+                messageAttachments.push({
+                    "type": "file",
+                    "localPath": filesArray[fileIndex].path,
+                    "name": filesArray[fileIndex].name,
+                    "mimeType": "text/plain",
+                    "language": filesArray[fileIndex].language || "",
+                    "size": filesArray[fileIndex].content ? filesArray[fileIndex].content.length : 0
+                });
 
+            var userModelIndex = chatModel.count;
             chatModel.append({
                 "text": displayText,
+                "attachmentsJson": JSON.stringify(messageAttachments),
                 "isUser": true,
                 "isComplete": true,
                 "isThinking": false,
@@ -847,14 +821,27 @@ YPage {
 
             id_chat_assistant_page.isGenerating = true;
             if (mediaParts.length > 0) {
-                if (filesArray.length > 0)
-                    mediaParts.unshift({
-                        "type": "text",
-                        "text": _fileContextText(filesArray)
-                    });
+                if (filesArray.length > 0) {
+                    for (var requestFileIndex = 0; requestFileIndex < filesArray.length; requestFileIndex++)
+                        mediaParts.push({
+                            "type": "file",
+                            "localPath": filesArray[requestFileIndex].path,
+                            "name": filesArray[requestFileIndex].name,
+                            "mimeType": "text/plain",
+                            "language": filesArray[requestFileIndex].language || "",
+                            "size": filesArray[requestFileIndex].content ? filesArray[requestFileIndex].content.length : 0
+                        });
+                }
                 chatbot.sendMessageWithMedia(content, JSON.stringify(mediaParts));
             } else {
                 chatbot.sendMessage(content, filesJson);
+            }
+
+            if (messageAttachments.length > 0 && chatbot.messages.length > 0) {
+                var savedMessage = chatbot.messages[chatbot.messages.length - 1];
+                var savedParts = savedMessage.parts || [];
+                if (savedParts.length > 0)
+                    chatModel.setProperty(userModelIndex, "attachmentsJson", JSON.stringify(savedParts));
             }
 
             if (typeof chatbot.getSessions === 'function') {
@@ -879,37 +866,7 @@ YPage {
             _followLatestMessage();
         }
 
-        if (fileItems.length === 0) {
-            sendMessageInternal([]);
-        } else {
-            _preparingSend = true;
-            var readSeq = ++_attachmentReadSeq;
-            var filesResult = new Array(fileItems.length);
-            var pending = fileItems.length;
-            for (var i = 0; i < fileItems.length; i++) {
-                (function (item, resultIndex) {
-                        readTextFileAsync(item.path, function (fileContent) {
-                            if (readSeq !== _attachmentReadSeq)
-                                return;
-                            if (fileContent !== null) {
-                                filesResult[resultIndex] = {
-                                    path: item.path,
-                                    name: item.name,
-                                    content: fileContent,
-                                    language: item.language
-                                };
-                            }
-                            pending--;
-                            if (pending === 0) {
-                                var readableFiles = filesResult.filter(function (file) {
-                                    return file !== undefined;
-                                });
-                                sendMessageInternal(readableFiles);
-                            }
-                        });
-                    })(fileItems[i], i);
-            }
-        }
+        sendMessageInternal(fileItems);
     }
 
     function _cppIndex(qmlIndex) {
@@ -1186,9 +1143,14 @@ YPage {
                         id_list_bounds_guard_timer.restart();
                 }
 
+                header: Item {
+                    width: id_chat_listview.width
+                    height: 10
+                }
+
                 footer: Item {
                     height: 16
-                    width: parent.width
+                    width: id_chat_listview.width
                 }
 
                 Rectangle {
@@ -1229,6 +1191,7 @@ YPage {
                     isReasoning: model.isReasoning || false
                     isToolCall: model.isToolCall
                     toolState: model.toolState
+                    attachmentsJson: model.attachmentsJson || "[]"
                     mathServerAvailable: id_chat_assistant_page.mathServerAvailable
                     textureCacheEnabled: id_chat_assistant_page.bubbleTextureCacheEnabled
                     renderMode: chatbot.bubbleRenderMode
@@ -1241,6 +1204,19 @@ YPage {
                     richPreloadMargin: id_chat_listview.height * 2
                     fontFamily: qmlGlobal.fontFamilyZhCn
                     onLongPressed: id_context_menu.showMenu(globalX, globalY, msgIndex)
+                    onAttachmentOpenRequested: function (attachmentType, localPath) {
+                        if (attachmentType === "image_url") {
+                            if (imageViewer.openAbsolute(localPath))
+                                id_pop_container.show("audiopages/FileManagerImageViewer");
+                            else
+                                toastBanner.error("图片附件不可用");
+                        } else if (attachmentType === "file") {
+                            if (textReader.openAbsolute(localPath))
+                                id_pop_container.show("audiopages/FileManagerTextViewer");
+                            else
+                                toastBanner.error("文本附件不可用");
+                        }
+                    }
                     onToolCardExpansionStarted: {
                         if (expanding)
                             id_tool_expansion_anchor_timer.preserveViewport();
@@ -1786,6 +1762,7 @@ YPage {
 
     ListModel {
         id: chatModel
+        dynamicRoles: true
     }
 
     QtObject {
@@ -1871,6 +1848,16 @@ YPage {
         }
         function onStreamStart() {
             _toolCallActive = false;
+        }
+        function onImageAttachmentsReceived(attachments) {
+            for (var index = chatModel.count - 1; index >= 0; index--) {
+                var item = chatModel.get(index);
+                if (item.isUser || item.isToolCall || item.isReasoning)
+                    continue;
+                chatModel.setProperty(index, "attachmentsJson", JSON.stringify(attachments));
+                _scheduleScrollToBottom();
+                return;
+            }
         }
         function onStreamEnd() {
             throttlingTimer.stop();

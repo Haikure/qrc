@@ -25,9 +25,12 @@ YPage {
 
         if (popThisPage && page.hasOwnProperty("backButtonClicked")) {
             page.backButtonClicked.connect(function() {
-                Qt.callLater(function() {
-                    if (id_setting_page.navigator)
-                        id_setting_page.navigator.resetToHome();
+                const navigator = id_setting_page.navigator;
+                if (!navigator)
+                    return;
+                navigator.afterTransition(function() {
+                    if (navigator.currentItem === id_setting_page)
+                        navigator.pop();
                 });
             });
         }

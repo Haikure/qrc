@@ -12,6 +12,14 @@ Item {
     property bool isReasoning: false
     property bool isToolCall: false
     property string toolState: ""
+    property string attachmentsJson: "[]"
+    readonly property var attachments: {
+        try {
+            return JSON.parse(attachmentsJson || "[]");
+        } catch (error) {
+            return [];
+        }
+    }
     property bool mathServerAvailable: false
     property bool textureCacheEnabled: true
     property string renderMode: "full"
@@ -31,6 +39,7 @@ Item {
     signal longPressed(real globalX, real globalY, int msgIndex)
     signal toolCardExpansionStarted(bool expanding)
     signal richContentCommitStarted(real itemY)
+    signal attachmentOpenRequested(string attachmentType, string localPath)
 
     width: listWidth
     height: messageLoader.height
@@ -239,23 +248,38 @@ Item {
         id: simpleAssistantComponent
         Item {
             implicitWidth: root.width
-            implicitHeight: simpleBubble.height + 8
+            implicitHeight: simpleContent.height + 10
 
-            SimpleAssistantBubble {
-                id: simpleBubble
-                rawText: root.rawText
-                isComplete: root.isComplete
-                richText: root.renderMode === "basic"
-                maxWidth: Math.min(root.listWidth - 16, 400)
-                fontFamily: root.fontFamily
+            Column {
+                id: simpleContent
                 x: 8
-                anchors.verticalCenter: parent.verticalCenter
+                spacing: 8
 
-                MouseArea {
-                    anchors.fill: parent
-                    onPressAndHold: {
-                        var pos = mapToItem(null, mouseX, mouseY);
-                        root.longPressed(pos.x, pos.y, root.messageIndex);
+                AttachmentMessage {
+                    attachments: root.attachments
+                    fontFamily: root.fontFamily
+                    onOpenRequested: function (attachmentType, localPath) {
+                        root.attachmentOpenRequested(attachmentType, localPath);
+                    }
+                    onLongPressed: function (globalX, globalY) {
+                        root.longPressed(globalX, globalY, root.messageIndex);
+                    }
+                }
+
+                SimpleAssistantBubble {
+                    id: simpleBubble
+                    rawText: root.rawText
+                    isComplete: root.isComplete
+                    richText: root.renderMode === "basic"
+                    maxWidth: Math.min(root.listWidth - 16, 400)
+                    fontFamily: root.fontFamily
+
+                    MouseArea {
+                        anchors.fill: parent
+                        onPressAndHold: {
+                            var pos = mapToItem(null, mouseX, mouseY);
+                            root.longPressed(pos.x, pos.y, root.messageIndex);
+                        }
                     }
                 }
             }
@@ -265,8 +289,9 @@ Item {
     Component {
         id: assistantComponent
         Item {
+            id: assistantItem
             implicitWidth: root.width
-            implicitHeight: mixedBubble.implicitHeight + 26
+            implicitHeight: assistantContent.height + 10
             readonly property bool containsMath: root.rawText.indexOf("$") !== -1
                                                  || root.rawText.indexOf("\\(") !== -1
                                                  || root.rawText.indexOf("\\[") !== -1
@@ -276,16 +301,30 @@ Item {
                                                        && mixedBubble.renderReady && aiBubble.height > 0
                                                        && aiBubble.height <= 1024
 
+            Column {
+                id: assistantContent
+                x: 8
+                spacing: 8
+
+                AttachmentMessage {
+                    attachments: root.attachments
+                    fontFamily: root.fontFamily
+                    onOpenRequested: function (attachmentType, localPath) {
+                        root.attachmentOpenRequested(attachmentType, localPath);
+                    }
+                    onLongPressed: function (globalX, globalY) {
+                        root.longPressed(globalX, globalY, root.messageIndex);
+                    }
+                }
+
             Rectangle {
                 id: aiBubble
                 width: Math.min(root.listWidth - 16, 400)
                 height: mixedBubble.implicitHeight + 18
-                x: 8
-                anchors.verticalCenter: parent.verticalCenter
                 radius: 16
                 color: "#182533"
                 clip: true
-                layer.enabled: parent.textureCacheActive
+                layer.enabled: assistantItem.textureCacheActive
                 layer.smooth: false
                 layer.mipmap: false
 
@@ -313,6 +352,7 @@ Item {
                     }
                 }
             }
+            }
         }
     }
 
@@ -320,20 +360,42 @@ Item {
         id: userComponent
         Item {
             implicitWidth: root.width
-            implicitHeight: chatBubble.height + 8
+            implicitHeight: userContent.height + 10
 
-            ChatBubble {
-                id: chatBubble
-                text: root.text
-                isUser: true
-                isComplete: root.isComplete
-                maxBubbleWidth: Math.min(root.listWidth * 0.85, 400)
-                containerWidth: root.listWidth
-                fontFamily: root.fontFamily
-                anchors.verticalCenter: parent.verticalCenter
-                onPressAndHold: {
-                    var pos = chatBubble.mapToItem(null, mouseX, mouseY);
-                    root.longPressed(pos.x, pos.y, root.messageIndex);
+            Column {
+                id: userContent
+                width: Math.max(attachmentStrip.implicitWidth, chatBubble.width)
+                anchors.right: parent.right
+                anchors.rightMargin: 8
+                spacing: 8
+
+                AttachmentMessage {
+                    id: attachmentStrip
+                    anchors.right: parent.right
+                    attachments: root.attachments
+                    fontFamily: root.fontFamily
+                    onOpenRequested: function (attachmentType, localPath) {
+                        root.attachmentOpenRequested(attachmentType, localPath);
+                    }
+                    onLongPressed: function (globalX, globalY) {
+                        root.longPressed(globalX, globalY, root.messageIndex);
+                    }
+                }
+
+                ChatBubble {
+                    id: chatBubble
+                    text: root.text
+                    visible: root.text !== ""
+                    isUser: true
+                    isComplete: root.isComplete
+                    maxBubbleWidth: Math.min(root.listWidth * 0.85, 400)
+                    containerWidth: root.listWidth
+                    fontFamily: root.fontFamily
+                    anchors.right: parent.right
+                    onPressAndHold: {
+                        var pos = chatBubble.mapToItem(null, mouseX, mouseY);
+                        root.longPressed(pos.x, pos.y, root.messageIndex);
+                    }
                 }
             }
         }
