@@ -116,6 +116,16 @@ YSettingItemPage {
                 }
             }
 
+            YSettingSwitchItem {
+                implicitHeight: 54
+                title: "隐藏音乐悬浮窗"
+                switchOn: musicPlayer.hideFloatingWindow
+                interval: 0
+                onTimerTriggered: {
+                    musicPlayer.hideFloatingWindow = switchOn
+                }
+            }
+
             YSpacingForColumn {
                 implicitHeight: 16
             }

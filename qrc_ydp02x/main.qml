@@ -19,7 +19,7 @@ YMainWindow {
     }
 
     function closeAudioPlayer() {
-        if (id_audio_player_loader.item && id_audio_player_loader.item.isShowing) {
+        if (id_audio_player_loader.item) {
             id_audio_player_loader.item.close();
         }
     }

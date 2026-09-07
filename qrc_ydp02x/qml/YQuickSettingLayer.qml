@@ -12,7 +12,12 @@ Item {
     state: "close"
 
     readonly property bool isOpening: ("open" === state)
+    readonly property bool musicControlsAvailable: musicPlayer.hideFloatingWindow
+                                        && mediaPlayerManager.playerMode === YEnum.PM_AudioPlayer
+                                        && mediaPlayerManager.title.length > 0
+                                        && mediaPlayerManager.playState !== YEnum.STOPPED
 
+    property bool showingMusicControls: false
     property alias fastBlurTarget: id_fast_blur.source
 
     function close() {
@@ -29,6 +34,7 @@ Item {
 
     function reopen() {
         state = "openning"
+        showingMusicControls = musicControlsAvailable
         id_open_close_animator.to = 0
         id_open_close_animator.restart()
         settingManager.updateVolumeAndLcd()
@@ -111,64 +117,95 @@ Item {
         color: "#E6000000"
     }
 
-    Grid {
-        anchors.top: parent.top
-        columns: 2
-        rows: 2
-        rowSpacing: 12
-        columnSpacing: 24
-        padding: 20
-
-        YVolmueAdjustor {
-            id: id_volum_setting
-        }
-
-        YSlideWifiSetting {
-            id: id_slide_wifi
-        }
-
-        YTouchRegulator {
-            id: id_lum_setting
-            property int lcdSettingBrightness: settingManager.lcdBrightness
-            YImage {
-                sourceSize: Qt.size(30, 30)
-                anchors.verticalCenter: parent.verticalCenter
-                anchors.left: parent.left
-                anchors.leftMargin: 16
-                imageName: {
-                    if (0 === id_lum_setting.value) {
-                        return "slide/lum_off"
-                    } else if (id_lum_setting.value <= 50) {
-                        return "slide/lum_half"
-                    }  else {
-                        return "slide/lum"
-                    }
-                }
-            }
-            onValueChanged: {
-                if (lcdSettingBrightness != value) {
-                    settingManager.setLcdBrightness(value)
-                }
-            }
-            onLcdSettingBrightnessChanged: {
-                if (lcdSettingBrightness != value) {
-                    value = lcdSettingBrightness
-                }
-            }
-
-            function rebinding() {
-                value = Qt.binding(function(){ return lcdSettingBrightness })
-            }
-
-            Component.onCompleted: rebinding()
-        }
-
-
-        YSlideBluetoothSetting {
-            id: id_slide_bluetooth
+    YQuickMusicPlayer {
+        visible: id_quick_setting_layer_root.showingMusicControls
+                 && id_quick_setting_layer_root.musicControlsAvailable
+        onAdjustSettingsRequested: id_quick_setting_layer_root.showingMusicControls = false
+        onPlayerRequested: {
+            id_quick_setting_layer_root.forceClose()
+            qmlGlobal.showAudioPlayer()
         }
     }
 
+    Item {
+        id: id_settings_panel
+        anchors.fill: parent
+        visible: !id_quick_setting_layer_root.showingMusicControls
+                 || !id_quick_setting_layer_root.musicControlsAvailable
+
+        YIconButton {
+            anchors.right: parent.right
+            anchors.rightMargin: 4
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 0
+            implicitWidth: 24
+            implicitHeight: 24
+            radius: 6
+            mouseAreaMargins: -3
+            sourceSize: Qt.size(16, 16)
+            imageName: "audioplayer/authorized_play"
+            visible: id_quick_setting_layer_root.musicControlsAvailable
+            onValidClicked: id_quick_setting_layer_root.showingMusicControls = true
+            objectName: "YQuickSettingLayer.qml_id_show_music_button"
+        }
+
+        Grid {
+            anchors.top: parent.top
+            columns: 2
+            rows: 2
+            rowSpacing: 12
+            columnSpacing: 24
+            padding: 20
+
+            YVolmueAdjustor {
+                id: id_volum_setting
+            }
+
+            YSlideWifiSetting {
+                id: id_slide_wifi
+            }
+
+            YTouchRegulator {
+                id: id_lum_setting
+                property int lcdSettingBrightness: settingManager.lcdBrightness
+                YImage {
+                    sourceSize: Qt.size(30, 30)
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left
+                    anchors.leftMargin: 16
+                    imageName: {
+                        if (0 === id_lum_setting.value) {
+                            return "slide/lum_off"
+                        } else if (id_lum_setting.value <= 50) {
+                            return "slide/lum_half"
+                        } else {
+                            return "slide/lum"
+                        }
+                    }
+                }
+                onValueChanged: {
+                    if (lcdSettingBrightness != value) {
+                        settingManager.setLcdBrightness(value)
+                    }
+                }
+                onLcdSettingBrightnessChanged: {
+                    if (lcdSettingBrightness != value) {
+                        value = lcdSettingBrightness
+                    }
+                }
+
+                function rebinding() {
+                    value = Qt.binding(function(){ return lcdSettingBrightness })
+                }
+
+                Component.onCompleted: rebinding()
+            }
+
+            YSlideBluetoothSetting {
+                id: id_slide_bluetooth
+            }
+        }
+    }
 
     YImage {
         sourceSize: Qt.size(40, 10)

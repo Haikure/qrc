@@ -869,20 +869,74 @@ YPage {
         sendMessageInternal(fileItems);
     }
 
+    function _syncHistoryIndices() {
+        if (!chatbot || !chatbot.messages)
+            return;
+
+        var history = chatbot.messages;
+        var cursor = 0;
+
+        function consumeToolTurn() {
+            var start = cursor;
+            if (cursor < history.length && history[cursor].role === "assistant"
+                    && history[cursor].toolCallsJson) {
+                cursor++;
+            }
+            while (cursor < history.length && history[cursor].role === "tool")
+                cursor++;
+            return cursor > start ? start : -1;
+        }
+
+        function consumeMessage(role) {
+            while (cursor < history.length) {
+                var message = history[cursor];
+                if (message.role === role) {
+                    var index = cursor;
+                    cursor++;
+                    return index;
+                }
+                if (message.role === "assistant" && message.toolCallsJson) {
+                    consumeToolTurn();
+                    continue;
+                }
+                if (message.role === "tool") {
+                    cursor++;
+                    continue;
+                }
+                cursor++;
+            }
+            return -1;
+        }
+
+        for (var rowIndex = 0; rowIndex < chatModel.count; rowIndex++) {
+            var row = chatModel.get(rowIndex);
+            var historyIndex = -1;
+            if (row.isReasoning || row.isThinking) {
+                historyIndex = -1;
+            } else if (row.isToolCall) {
+                historyIndex = consumeToolTurn();
+            } else if (row.isUser) {
+                historyIndex = consumeMessage("user");
+            } else {
+                historyIndex = consumeMessage("assistant");
+            }
+            if (row.historyIndex !== historyIndex)
+                chatModel.setProperty(rowIndex, "historyIndex", historyIndex);
+        }
+    }
+
     function _cppIndex(qmlIndex) {
+        _syncHistoryIndices();
         var item = chatModel.get(qmlIndex);
         if (item && item.historyIndex !== undefined && item.historyIndex >= 0)
             return item.historyIndex;
-        for (var i = qmlIndex - 1; i >= 0; i--) {
-            var prev = chatModel.get(i);
-            if (prev && prev.historyIndex !== undefined && prev.historyIndex >= 0)
-                return prev.historyIndex + (qmlIndex - i);
-        }
-        return qmlIndex;
+        return -1;
     }
 
     function deleteSingleMessage(index) {
         var cppIndex = _cppIndex(index);
+        if (cppIndex < 0)
+            return;
         chatModel.remove(index, 1);
         for (var i = index; i < chatModel.count; i++) {
             var it = chatModel.get(i);
@@ -898,6 +952,8 @@ YPage {
 
     function regenerateMessage(index) {
         var cppIndex = _cppIndex(index);
+        if (cppIndex < 0)
+            return;
         let countToRemove = chatModel.count - index;
         if (countToRemove > 0)
             chatModel.remove(index, countToRemove);
@@ -923,6 +979,8 @@ YPage {
 
     function deleteMessageAndSubsequent(index) {
         var cppIndex = _cppIndex(index);
+        if (cppIndex < 0)
+            return;
         let countToRemove = chatModel.count - index;
         if (countToRemove > 0) {
             chatModel.remove(index, countToRemove);
@@ -959,6 +1017,8 @@ YPage {
     function editMessage(index) {
         var item = chatModel.get(index);
         var cppIndex = _cppIndex(index);
+        if (cppIndex < 0)
+            return;
         var oldContent = item.raw_text;
         openInputPage("编辑消息...", oldContent, function (newContent) {
             if (newContent && newContent.trim().length > 0) {
@@ -1848,6 +1908,9 @@ YPage {
         }
         function onStreamStart() {
             _toolCallActive = false;
+        }
+        function onMessagesChanged() {
+            _syncHistoryIndices();
         }
         function onImageAttachmentsReceived(attachments) {
             for (var index = chatModel.count - 1; index >= 0; index--) {
