@@ -2,107 +2,14 @@ import "./commons"
 import "./components"
 import "./i18n"
 import QtQuick 2.12
-import QtGraphicalEffects 1.12
 import com.github.penuniverse 1.0
 import com.youdao.pen 1.0
 
 YBackground {
     id: id_container_index
 
-    property bool isLocked: false
-    property bool isDimmed: false
-
-    property int idleInterval: 15000
-    property int dimInterval: 25000
-
-    MouseArea {
-        anchors.fill: parent
-        z: 100
-        enabled: !isLocked
-
-        propagateComposedEvents: true
-        hoverEnabled: true
-
-        onPressed: {
-            resetIdleStatus();
-            mouse.accepted = false;
-        }
-        onReleased: {
-            resetIdleStatus();
-            mouse.accepted = false;
-        }
-        onPositionChanged: {
-            resetIdleStatus();
-            mouse.accepted = false;
-        }
-        onWheel: {
-            resetIdleStatus();
-            wheel.accepted = false;
-        }
-    }
-
-    Timer {
-        id: id_idle_timer
-        interval: idleInterval
-        repeat: false
-
-        running: !isLocked && Qt.application.active && (qmlGlobal.currentPageIndex === YEnum.PageIndex.NonePage)
-
-        onTriggered: {
-            if (qmlGlobal.currentPageIndex !== YEnum.PageIndex.NonePage) {
-                return;
-            }
-
-            id_container_index.isLocked = true;
-            id_dim_timer.start();
-        }
-    }
-
-    Timer {
-        id: id_dim_timer
-        interval: dimInterval
-        repeat: false
-        running: false
-        onTriggered: {
-            if (id_container_index.isLocked) {
-                id_container_index.isDimmed = true;
-            }
-        }
-    }
-
-    function resetIdleStatus() {
-        if (id_container_index.isLocked || id_container_index.isDimmed) {
-            id_container_index.isLocked = false;
-            id_container_index.isDimmed = false;
-            id_dim_timer.stop();
-            updateTimeStrings();
-        }
-
-        if (id_idle_timer.running) {
-            id_idle_timer.restart();
-        }
-    }
-
-    property string currentTimeString: "00:00"
-    property string currentDateString: ""
-
-    Timer {
-        interval: 1000
-        running: true
-        repeat: true
-        triggeredOnStart: true
-        onTriggered: updateTimeStrings()
-    }
-
-    function updateTimeStrings() {
-        var now = new Date();
-        currentTimeString = Qt.formatTime(now, "HH:mm");
-        var month = now.getMonth() + 1;
-        var day = now.getDate();
-        var dayOfWeek = now.getDay();
-        var weekDays = ["日", "一", "二", "三", "四", "五", "六"];
-        currentDateString = month + "月" + day + "日 星期" + weekDays[dayOfWeek];
-    }
+    // 按键小助手开启时，语音助手图标恢复为原版语言助手，避免首页出现 Mod 入口
+    readonly property int speechEntryPageIndex: antiEmbs.active ? YEnum.PageIndex.Speech : PageIndex.AudioRecorder
 
     function delayInitMainTitleBar() {
         id_main_titlebar_loader.source = "components/YMainTitleBar.qml";
@@ -231,93 +138,9 @@ YBackground {
         }
     }
 
-    FastBlur {
-        id: id_bg_blur
-        anchors.fill: id_bg_image
-        source: id_bg_image
-        radius: 64
-        transparentBorder: true
-        opacity: isDimmed ? 1.0 : 0.0
-        visible: opacity > 0
-        Behavior on opacity {
-            NumberAnimation {
-                duration: 800
-                easing.type: Easing.InOutQuad
-            }
-        }
-    }
-
-    Rectangle {
-        id: id_dark_overlay
-        anchors.fill: parent
-        color: "black"
-        opacity: isDimmed ? 0.4 : 0.0
-        visible: opacity > 0
-        Behavior on opacity {
-            NumberAnimation {
-                duration: 800
-                easing.type: Easing.InOutQuad
-            }
-        }
-    }
-
-    MouseArea {
-        anchors.fill: parent
-        enabled: isLocked
-        z: 99
-        onClicked: {
-            resetIdleStatus();
-        }
-    }
-
-    Item {
-        id: id_lock_screen_layer
-        anchors.fill: parent
-        z: 50
-        opacity: isLocked ? 1.0 : 0.0
-        visible: opacity > 0
-        Behavior on opacity {
-            NumberAnimation {
-                duration: 500
-            }
-        }
-
-        Column {
-            anchors.centerIn: parent
-            spacing: 10
-
-            Text {
-                text: currentTimeString
-                color: "white"
-                font.pixelSize: 80
-                font.weight: Font.Light
-                font.family: "Roboto"
-                anchors.horizontalCenter: parent.horizontalCenter
-                style: Text.Outline
-                styleColor: "#40000000"
-            }
-
-            Text {
-                text: currentDateString
-                color: "white"
-                font.pixelSize: 28
-                anchors.horizontalCenter: parent.horizontalCenter
-                style: Text.Outline
-                styleColor: "#40000000"
-            }
-        }
-    }
-
     Item {
         id: id_main_content
         anchors.fill: parent
-        opacity: isLocked ? 0.0 : 1.0
-        visible: opacity > 0
-        Behavior on opacity {
-            NumberAnimation {
-                duration: 300
-            }
-        }
 
         YLoader {
             id: id_main_titlebar_loader
@@ -422,7 +245,7 @@ YBackground {
             }
             append({
                 "iconFg": "home-speech",
-                "pageIndex": PageIndex.AudioRecorder,
+                "pageIndex": speechEntryPageIndex,
                 "logAction": ""
             });
             append({
@@ -492,7 +315,7 @@ YBackground {
             mainMenuModel.append({"iconFg": "home-dict", "pageIndex": YEnum.PageIndex.Dict, "logAction": "action=home_search_click"});
             if (!antiEmbs.active)
                 mainMenuModel.append({"iconFg": "home-textbook", "pageIndex": PageIndex.ChatAssistant, "logAction": ""});
-            mainMenuModel.append({"iconFg": "home-speech", "pageIndex": PageIndex.AudioRecorder, "logAction": ""});
+            mainMenuModel.append({"iconFg": "home-speech", "pageIndex": speechEntryPageIndex, "logAction": ""});
             mainMenuModel.append({"iconFg": "home-fav", "pageIndex": YEnum.PageIndex.Fav, "logAction": "action=home_wordbook_click"});
             if (qmlGlobal.checkFeature(YEnum.FEATURE_AUDIO))
                 mainMenuModel.append({"iconFg": "home-audioplayer", "pageIndex": YEnum.PageIndex.Audioplayer, "logAction": "action=home_listening_clik"});
