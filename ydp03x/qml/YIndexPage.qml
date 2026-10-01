@@ -67,7 +67,7 @@ YBackground {
                 return;
             }
 
-            if (typeof fileManager === "object" && fileManager !== null && fileManager.hiddenAll) {
+            if (typeof antiEmbs === "object" && antiEmbs !== null && antiEmbs.active) {
                 qmlGlobal.requestShowPage(YEnum.PageIndex.Speech)
             } else {
                 qmlGlobal.requestShowThirdQML("ChatAssistant")
@@ -364,7 +364,9 @@ YBackground {
                         case YEnum.PageIndex.UpdateOS:
                             return YTranslateText.updateOS
                         case YEnum.PageIndex.Speech:
-                            return "AI 助手"
+                            return (typeof antiEmbs === "object" && antiEmbs !== null && antiEmbs.active)
+                                    ? "语言助手"
+                                    : "AI 助手"
                         case YEnum.PageIndex.Reading:
                             return YTranslateText.touchreading
                         case YEnum.PageIndex.TextBook:
@@ -504,4 +506,3 @@ YBackground {
         }
     }
 }
-

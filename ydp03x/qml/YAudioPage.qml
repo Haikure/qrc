@@ -50,7 +50,10 @@ YBackButtonAudioPage {
         YMyImportButton {
             id: id_my_imports_button
             name: YTranslateText.myImportAudios
-            count: columnManager.importCount + YTranslateText.pieces
+            // 防尴尬模式下文件列表为空，计数同步显示 0，避免与实际列表相反
+            count: (typeof antiEmbs !== 'undefined' && antiEmbs.active
+                        ? 0
+                        : columnManager.importCount) + YTranslateText.pieces
             onValidClicked: {
                 mediaManager.launchMyImportMedias()
                 id_delay_timer.start()
