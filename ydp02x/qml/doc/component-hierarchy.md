@@ -121,7 +121,7 @@ YDictTypeBase
 ```
 YMainWindow
   ├── YQuickSettingLayer             -- 下拉快速设置（独立层）
-  ├── YIndexPage                     -- 首页（主菜单 + 锁屏）
+  ├── YIndexPage                     -- 首页（主菜单）
   │     └── YMainTitleBar            -- 状态栏（时间、电量、蓝牙）
   │
   ├── YStackView                     -- 弹窗导航栈容器

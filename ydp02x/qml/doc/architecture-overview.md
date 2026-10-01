@@ -42,7 +42,7 @@ C++ Plugin Layer (com.youdao.pen 1.0)
 | `chatbot` | AI 聊天机器人 |
 | `shell` | Shell 命令执行 |
 | `audioRecorder` | 音频录制 |
-| `locker` | 锁屏管理 |
+| `locker` | 保护锁管理（密码 / 场景锁） |
 | `strokeManager` | 笔画管理 |
 | `wgt` | 重量/单位管理 |
 | `bot` | 机器人管理 |
