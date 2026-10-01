@@ -103,8 +103,18 @@ YPage {
         }
     }
 
-    function selectCandidate(index) {
+    function selectCandidate(index, text) {
         id_rime_backend.selectCandidate(index);
+    }
+
+    function resetInput(text) {
+        isPinyinMode = false;
+        id_rime_backend.clear();
+        id_candidate_model.clear();
+        currentPinyinLen = 0;
+        id_input_text_title_area.clear();
+        if (text && text.length > 0)
+            id_input_text_title_area.enterChar(text);
     }
 
     function delChar() {
@@ -143,6 +153,13 @@ YPage {
     function switchInputStatus(status) {
         currentInputStatus = status;
         YInputProperty.currentInputStatus = status;
+    }
+
+    Component.onCompleted: {
+        if (visible && typeof keyBoard !== 'undefined' && keyBoard !== null) {
+            keyBoard.inputPageShowing = true;
+            keyBoard.autoSendScan = false;
+        }
     }
 
     // ---------- 布局：整页纵向滚动 ----------
