@@ -338,12 +338,8 @@ YLoader {
         enabled: isVerifiyFinished
         function onIsOidStart(isOid) {
 
-            //正在升级OS 禁用oid
-          console.log("updateOsManager.isUpdatingOS----------===",updateOsManager.isUpdatingOS)
-          if(updateOsManager.isUpdatingOS)
-              return ;
-
-            console.warn("YTouchReadingResultLoader.qml====IsOidStart: ", isOid)
+            //正在升级OS 禁用oid（三代固件未暴露 updateOsManager，此处跳过检测）
+          console.warn("YTouchReadingResultLoader.qml====IsOidStart: ", isOid)
             resultManager.resetStatus()
             isOidScanning = isOid
             let isReStartOidTmp = isReStartOid

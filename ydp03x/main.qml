@@ -23,6 +23,8 @@ YMainWindow {
     }
 
     function closeAudioPlayer() {
+        // 三代 YAudioPlayer.close() 会在媒体非停止状态拉起悬浮指示器，
+        // 对未显示的播放器调用 close() 会导致扫词时凭空出现音乐悬浮按钮。
         if (id_audio_player_loader.item != null && id_audio_player_loader.item.isShowing) {
             id_audio_player_loader.item.close()
         }
@@ -657,10 +659,11 @@ YMainWindow {
         }
     }
 
+    // 三代固件未暴露 updateOsManager（OS 升级走 updateManager），此连接在二代上才有效
     Connections {
-        target: updateOsManager
+        target: typeof updateOsManager !== "undefined" ? updateOsManager : null
         ignoreUnknownSignals: true
-        enabled: isVerifiyFinished
+        enabled: isVerifiyFinished && typeof updateOsManager !== "undefined"
 
         function onOsstateChanged() {
             if (updateOsManager.osstate !== YEnum.DefaultState) {
@@ -680,7 +683,8 @@ YMainWindow {
             qmlGlobal.mainWindowDisplayed()
         })
 
-        if (updateOsManager.osstate !== YEnum.DefaultState
+        if (typeof updateOsManager !== "undefined"
+                && updateOsManager.osstate !== YEnum.DefaultState
                 && updateOsManager.osstate !== YEnum.DowningResourceFailState
                 && updateOsManager.osstate !== YEnum.BackupingFailDataState
                 && updateOsManager.osstate !== YEnum.DowingOtaFailState
