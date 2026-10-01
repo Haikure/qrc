@@ -41,7 +41,10 @@ YSettingItemPage {
 
                 YSettingAboutClickableItem {
                     title: t
-                    imageName: batteryInfo.autoSuspendDuration == title ? 'settings/st-check' : ''
+                    // The C++ getter returns e.g. "10分钟" while the label is "10 分钟",
+                    // so compare after stripping whitespace.
+                    imageName: ("" + batteryInfo.autoSuspendDuration).replace(/\s+/g, "")
+                               === ("" + title).replace(/\s+/g, "") ? 'settings/st-check' : ''
                     opacityChangableWhenPressed: false
                     onClicked: {
                         batteryInfo.autoSuspendDuration = title

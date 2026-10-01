@@ -44,7 +44,10 @@ YSettingItemPage {
                 YSettingAboutClickableItem {
                     title: t
                     opacityChangableWhenPressed: false
-                    imageName: screenManager.autoSleepDuration == title ? 'settings/st-check' : ''
+                    // The C++ getter returns e.g. "30秒"/"1分钟" while the labels are
+                    // "30 秒"/"1 分钟", so compare after stripping whitespace.
+                    imageName: ("" + screenManager.autoSleepDuration).replace(/\s+/g, "")
+                               === ("" + title).replace(/\s+/g, "") ? 'settings/st-check' : ''
                     onClicked: {
                         screenManager.autoSleepDuration = title
                     }

@@ -49,6 +49,13 @@ YSettingItemPage {
             // }
 
             YSettingAboutClickableItem {
+                title: "无操作自动关机"
+                imageName: "settings/info_more_arrow"
+                value: screenManager.autoShutdownDuration
+                onClicked: openSettingPage("AutoShutdownSetting")
+            }
+
+            YSettingAboutClickableItem {
                 title: "自动休眠"
                 imageName: "settings/info_more_arrow"
                 value: batteryInfo.autoSuspendDuration
