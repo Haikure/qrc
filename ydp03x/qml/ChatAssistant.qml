@@ -498,31 +498,63 @@ YPage {
         }
     }
 
+    function _findCurrentAnswerIndex() {
+        for (var i = chatModel.count - 1; i >= 0; i--) {
+            var item = chatModel.get(i);
+            if (item.isUser)
+                return -1;
+            if (!item.isToolCall && !item.isReasoning && !item.isThinking && !item.isComplete)
+                return i;
+        }
+        return -1;
+    }
+
     function _resetStreamState() {
         throttlingTimer.stop();
         generationDoneTimer.stop();
         streamThrottle.content = "";
         streamThrottle.lastIndex = -1;
+        streamThrottle.targetKind = "";
         streamThrottle.endProcessed = false;
     }
 
     function _flushStreamBuffer() {
         var index = streamThrottle.lastIndex;
         var content = streamThrottle.content;
+        var targetKind = streamThrottle.targetKind;
         streamThrottle.content = "";
         streamThrottle.lastIndex = -1;
-        if (index < 0 || index >= chatModel.count || content === "")
+        streamThrottle.targetKind = "";
+        if (content === "")
             return -1;
 
-        var item = chatModel.get(index);
-        if (item.isUser || item.isToolCall)
-            return -1;
+        var item = index >= 0 && index < chatModel.count ? chatModel.get(index) : null;
+        var targetStillValid = item && !item.isUser && !item.isToolCall && !item.isReasoning && !item.isComplete
+                               && (targetKind === "" || (targetKind === "thinking" && item.isThinking)
+                                   || (targetKind === "answer" && !item.isThinking));
+        if (!targetStillValid) {
+            // The thinking row can be removed when a delayed reasoning chunk arrives.
+            // Never write the buffered answer into the row now occupying its old index.
+            index = _findCurrentAnswerIndex();
+            if (index < 0) {
+                _appendAnswerPlaceholder();
+                index = chatModel.count - 1;
+            }
+            item = chatModel.get(index);
+        }
+
         var raw = item.isThinking ? content : (item.raw_text || "") + content;
         chatModel.set(index, {
             "text": raw,
             "raw_text": raw,
+            "isUser": false,
             "isThinking": false,
-            "isComplete": false
+            "isReasoning": false,
+            "isToolCall": false,
+            "isComplete": false,
+            "toolCallId": "",
+            "toolState": "",
+            "historyIndex": -1
         });
         return index;
     }
@@ -912,20 +944,74 @@ YPage {
         }
     }
 
+    function _syncHistoryIndices() {
+        if (!chatbot || !chatbot.messages)
+            return;
+
+        var history = chatbot.messages;
+        var cursor = 0;
+
+        function consumeToolTurn() {
+            var start = cursor;
+            if (cursor < history.length && history[cursor].role === "assistant"
+                    && history[cursor].toolCallsJson) {
+                cursor++;
+            }
+            while (cursor < history.length && history[cursor].role === "tool")
+                cursor++;
+            return cursor > start ? start : -1;
+        }
+
+        function consumeMessage(role) {
+            while (cursor < history.length) {
+                var message = history[cursor];
+                if (message.role === role) {
+                    var index = cursor;
+                    cursor++;
+                    return index;
+                }
+                if (message.role === "assistant" && message.toolCallsJson) {
+                    consumeToolTurn();
+                    continue;
+                }
+                if (message.role === "tool") {
+                    cursor++;
+                    continue;
+                }
+                cursor++;
+            }
+            return -1;
+        }
+
+        for (var rowIndex = 0; rowIndex < chatModel.count; rowIndex++) {
+            var row = chatModel.get(rowIndex);
+            var historyIndex = -1;
+            if (row.isReasoning || row.isThinking) {
+                historyIndex = -1;
+            } else if (row.isToolCall) {
+                historyIndex = consumeToolTurn();
+            } else if (row.isUser) {
+                historyIndex = consumeMessage("user");
+            } else {
+                historyIndex = consumeMessage("assistant");
+            }
+            if (row.historyIndex !== historyIndex)
+                chatModel.setProperty(rowIndex, "historyIndex", historyIndex);
+        }
+    }
+
     function _cppIndex(qmlIndex) {
+        _syncHistoryIndices();
         var item = chatModel.get(qmlIndex);
         if (item && item.historyIndex !== undefined && item.historyIndex >= 0)
             return item.historyIndex;
-        for (var i = qmlIndex - 1; i >= 0; i--) {
-            var prev = chatModel.get(i);
-            if (prev && prev.historyIndex !== undefined && prev.historyIndex >= 0)
-                return prev.historyIndex + (qmlIndex - i);
-        }
-        return qmlIndex;
+        return -1;
     }
 
     function deleteSingleMessage(index) {
         var cppIndex = _cppIndex(index);
+        if (cppIndex < 0)
+            return;
         chatModel.remove(index, 1);
         for (var i = index; i < chatModel.count; i++) {
             var it = chatModel.get(i);
@@ -941,6 +1027,8 @@ YPage {
 
     function regenerateMessage(index) {
         var cppIndex = _cppIndex(index);
+        if (cppIndex < 0)
+            return;
         let countToRemove = chatModel.count - index;
         if (countToRemove > 0)
             chatModel.remove(index, countToRemove);
@@ -966,6 +1054,8 @@ YPage {
 
     function deleteMessageAndSubsequent(index) {
         var cppIndex = _cppIndex(index);
+        if (cppIndex < 0)
+            return;
         let countToRemove = chatModel.count - index;
         if (countToRemove > 0) {
             chatModel.remove(index, countToRemove);
@@ -1002,6 +1092,8 @@ YPage {
     function editMessage(index) {
         var item = chatModel.get(index);
         var cppIndex = _cppIndex(index);
+        if (cppIndex < 0)
+            return;
         var oldContent = item.raw_text;
         openInputPage("编辑消息...", oldContent, function (newContent) {
             if (newContent && newContent.trim().length > 0) {
@@ -1844,6 +1936,7 @@ YPage {
         id: streamThrottle
         property string content: ""
         property int lastIndex: -1
+        property string targetKind: ""
         property bool scrollScheduled: false
         property bool endProcessed: false
     }
@@ -1889,6 +1982,14 @@ YPage {
             }
         }
         function onReasoningChunk(content) {
+            if (!content)
+                return;
+
+            // Flush answer text before changing rows. Otherwise the saved index
+            // can point at the newly inserted reasoning card.
+            if (streamThrottle.content !== "")
+                _flushStreamBuffer();
+
             var lastIndex = chatModel.count - 1;
             if (lastIndex >= 0 && chatModel.get(lastIndex).isReasoning) {
                 chatModel.setProperty(lastIndex, "raw_text", chatModel.get(lastIndex).raw_text + content);
@@ -1896,7 +1997,13 @@ YPage {
             }
             if (lastIndex >= 0 && chatModel.get(lastIndex).isThinking)
                 chatModel.remove(lastIndex);
-            chatModel.append(_makeReasoningEntry(content));
+
+            // Keep late reasoning before an already-created answer row.
+            var answerIndex = _findCurrentAnswerIndex();
+            if (answerIndex >= 0)
+                chatModel.insert(answerIndex, _makeReasoningEntry(content));
+            else
+                chatModel.append(_makeReasoningEntry(content));
             _scheduleScrollToBottom();
         }
         function onStreamChunk(content) {
@@ -1918,11 +2025,16 @@ YPage {
                 _flushStreamBuffer();
             streamThrottle.content += content;
             streamThrottle.lastIndex = lastIndex;
+            streamThrottle.targetKind = item.isThinking ? "thinking" : "answer";
             if (!throttlingTimer.running)
                 throttlingTimer.start();
         }
         function onStreamStart() {
             _toolCallActive = false;
+            _resetStreamState();
+        }
+        function onMessagesChanged() {
+            _syncHistoryIndices();
         }
         function onStreamEnd() {
             throttlingTimer.stop();
