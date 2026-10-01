@@ -69,10 +69,12 @@ YWindow {
         YMouseArea {
             id: id_drag_show_quick_setting
             anchors.left: parent.left
-            anchors.leftMargin: 180
+            // 只保留屏幕顶部中央约三分之一、较窄的一条作为下拉判定区，
+            // 避免与页面顶部的可点按内容冲突。
+            anchors.leftMargin: parent.width / 3
             anchors.right: parent.right
-            anchors.rightMargin: 180
-            height: 30
+            anchors.rightMargin: parent.width / 3
+            height: 20
             drag.target: id_quick_setting_layer.dragTarget
             drag.axis: Drag.YAxis
             drag.minimumY: - YBaseEnum.Screen.Height
