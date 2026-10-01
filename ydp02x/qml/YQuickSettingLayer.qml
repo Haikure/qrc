@@ -135,9 +135,9 @@ Item {
 
         YIconButton {
             anchors.right: parent.right
-            anchors.rightMargin: 4
+            anchors.rightMargin: 12
             anchors.bottom: parent.bottom
-            anchors.bottomMargin: 0
+            anchors.bottomMargin: 8
             implicitWidth: 24
             implicitHeight: 24
             radius: 6
@@ -149,24 +149,120 @@ Item {
             objectName: "YQuickSettingLayer.qml_id_show_music_button"
         }
 
-        Grid {
+        Item {
+            id: id_status_bar
             anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            height: 26
+
+            YText {
+                id: id_time
+                anchors.left: parent.left
+                anchors.leftMargin: 16
+                anchors.verticalCenter: parent.verticalCenter
+                width: paintedWidth
+                height: paintedHeight
+                font.pixelSize: 14
+                text: timeManager.currentTime
+            }
+
+            YImage {
+                id: id_headset_icon
+                anchors.left: id_time.right
+                anchors.leftMargin: 4
+                anchors.verticalCenter: parent.verticalCenter
+                sourceSize: Qt.size(14, 14)
+                imageName: "settings/bluetooth-headset"
+                visible: blueToothManager.link || systemBase.digHeadset
+            }
+
+            YText {
+                id: id_battery_value
+                anchors.right: id_battery_icon.left
+                anchors.rightMargin: 6
+                anchors.verticalCenter: parent.verticalCenter
+                width: paintedWidth
+                height: paintedHeight
+                font.pixelSize: 14
+                text: ("%1%").arg(batteryManager.power)
+            }
+
+            Rectangle {
+                id: id_battery_icon
+                anchors.right: batteryManager.charging ? id_charging_icon.left : parent.right
+                anchors.rightMargin: batteryManager.charging ? 4 : 16
+                anchors.verticalCenter: parent.verticalCenter
+                width: 24
+                height: 11
+                radius: 4
+                color: "transparent"
+                border.width: 1
+                border.color: YColors.white
+
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.leftMargin: 2
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: (parent.width - 4) * Math.max(0, Math.min(100, batteryManager.power)) / 100
+                    height: 6
+                    radius: 2
+                    color: batteryManager.charging
+                          ? (batteryManager.power < 100 ? "#00FF66" : YColors.white)
+                          : (batteryManager.power < 20 ? YColors.red : YColors.white)
+                }
+
+                Rectangle {
+                    anchors.left: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 2
+                    height: 5
+                    radius: 1
+                    color: YColors.white
+                }
+            }
+
+            YImage {
+                id: id_charging_icon
+                anchors.right: parent.right
+                anchors.rightMargin: 2
+                anchors.verticalCenter: parent.verticalCenter
+                sourceSize: Qt.size(14, 14)
+                imageName: "ic_battery_flash"
+                visible: batteryManager.charging
+            }
+        }
+
+        Grid {
+            anchors.top: id_status_bar.bottom
+            anchors.topMargin: 4
+            anchors.horizontalCenter: parent.horizontalCenter
             columns: 2
             rows: 2
-            rowSpacing: 12
-            columnSpacing: 24
-            padding: 20
+            rowSpacing: 10
+            columnSpacing: 16
+            padding: 0
 
             YVolmueAdjustor {
                 id: id_volum_setting
+                implicitWidth: 150
+                implicitHeight: 46
+                width: 150
+                height: 46
             }
 
             YSlideWifiSetting {
                 id: id_slide_wifi
+                width: 72
+                height: 46
             }
 
             YTouchRegulator {
                 id: id_lum_setting
+                implicitWidth: 150
+                implicitHeight: 46
+                width: 150
+                height: 46
                 property int lcdSettingBrightness: settingManager.lcdBrightness
                 YImage {
                     sourceSize: Qt.size(30, 30)
@@ -203,6 +299,8 @@ Item {
 
             YSlideBluetoothSetting {
                 id: id_slide_bluetooth
+                width: 72
+                height: 46
             }
         }
     }
