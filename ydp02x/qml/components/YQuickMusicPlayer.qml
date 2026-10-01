@@ -13,11 +13,14 @@ Item {
     readonly property bool isPlaying: mediaPlayerManager.playState === YEnum.PLAYING
     readonly property string currentTitle: mediaPlayerManager.title || ""
     readonly property var currentSentenceData: id_lrc_view.currentItem ? id_lrc_view.currentItem["lyricData"] : null
-    readonly property string currentLyric: !mediaPlayerManager.hasLrc
-                                         ? ""
-                                         : (currentSentenceData && currentSentenceData.mainLrc
-                                            ? currentSentenceData.mainLrc
-                                            : (mediaPlayerManager.mainLrc || ""))
+    readonly property string currentMainLyric: !mediaPlayerManager.hasLrc
+                                             ? ""
+                                             : (currentSentenceData && currentSentenceData.mainLrc
+                                                ? currentSentenceData.mainLrc
+                                                : (mediaPlayerManager.mainLrc || ""))
+    readonly property string currentTranslationLyric: currentSentenceData && currentSentenceData.transLrc
+                                                     ? currentSentenceData.transLrc
+                                                     : ""
 
     ListView {
         id: id_lrc_view
@@ -33,7 +36,7 @@ Item {
         }
     }
 
-    YTextMedium {
+    Item {
         id: id_title
         anchors.left: parent.left
         anchors.leftMargin: 16
@@ -42,17 +45,48 @@ Item {
         anchors.top: parent.top
         anchors.topMargin: 8
         height: 22
-        elide: YText.ElideRight
-        font.pixelSize: 16
-        text: currentTitle
+        clip: true
+
+        YTextMedium {
+            id: id_title_text
+            height: parent.height
+            width: paintedWidth
+            verticalAlignment: YTextMedium.AlignVCenter
+            font.pixelSize: 16
+            elide: Text.ElideNone
+            wrapMode: Text.NoWrap
+            text: currentTitle
+            onTextChanged: {
+                x = 0
+                if (id_title_text.paintedWidth > id_title.width)
+                    id_title_marquee.restart()
+            }
+
+            SequentialAnimation {
+                id: id_title_marquee
+                loops: Animation.Infinite
+                running: id_title_text.paintedWidth > id_title.width
+                NumberAnimation {
+                    target: id_title_text
+                    property: "x"
+                    from: 0
+                    to: -(id_title_text.paintedWidth - id_title.width)
+                    duration: Math.max(1500, (id_title_text.paintedWidth - id_title.width) * 28)
+                    easing.type: Easing.Linear
+                }
+                PauseAnimation { duration: 700 }
+                PropertyAction { target: id_title_text; property: "x"; value: 0 }
+                PauseAnimation { duration: 700 }
+            }
+        }
     }
 
     YIconButton {
         id: id_adjust_button
         anchors.right: parent.right
-        anchors.rightMargin: 12
+        anchors.rightMargin: 10
         anchors.top: parent.top
-        anchors.topMargin: 4
+        anchors.topMargin: 8
         implicitWidth: 30
         implicitHeight: 30
         radius: 8
@@ -63,21 +97,102 @@ Item {
         objectName: "YQuickMusicPlayer.qml_id_adjust_button"
     }
 
-    YText {
+    Item {
         id: id_lyric
         anchors.left: parent.left
         anchors.leftMargin: 16
-        anchors.right: parent.right
-        anchors.rightMargin: 16
+        anchors.right: id_adjust_button.left
+        anchors.rightMargin: 8
         anchors.top: id_title.bottom
         anchors.topMargin: 1
         height: 38
-        color: YColors.grayText
-        font.pixelSize: 14
-        elide: YText.ElideRight
-        maximumLineCount: 2
-        wrapMode: Text.WordWrap
-        text: currentLyric.length > 0 ? currentLyric : "暂无歌词"
+        Item {
+            id: id_main_lyric_view
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 18
+            clip: true
+
+            YText {
+                id: id_main_lyric_text
+                height: parent.height
+                width: paintedWidth
+                verticalAlignment: YText.AlignVCenter
+                color: YColors.grayText
+                font.pixelSize: 14
+                elide: Text.ElideNone
+                wrapMode: Text.NoWrap
+                text: currentMainLyric.length > 0 ? currentMainLyric
+                                                   : (currentTranslationLyric.length > 0 ? "" : "暂无歌词")
+                onTextChanged: {
+                    x = 0
+                    if (id_main_lyric_text.paintedWidth > id_main_lyric_view.width)
+                        id_main_lyric_marquee.restart()
+                }
+
+                SequentialAnimation {
+                    id: id_main_lyric_marquee
+                    loops: Animation.Infinite
+                    running: id_main_lyric_text.paintedWidth > id_main_lyric_view.width
+                    NumberAnimation {
+                        target: id_main_lyric_text
+                        property: "x"
+                        from: 0
+                        to: -(id_main_lyric_text.paintedWidth - id_main_lyric_view.width)
+                        duration: Math.max(1500, (id_main_lyric_text.paintedWidth - id_main_lyric_view.width) * 28)
+                        easing.type: Easing.Linear
+                    }
+                    PauseAnimation { duration: 700 }
+                    PropertyAction { target: id_main_lyric_text; property: "x"; value: 0 }
+                    PauseAnimation { duration: 700 }
+                }
+            }
+        }
+
+        Item {
+            id: id_translation_lyric_view
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: id_main_lyric_view.bottom
+            height: 18
+            clip: true
+            visible: currentTranslationLyric.length > 0
+
+            YText {
+                id: id_translation_lyric_text
+                height: parent.height
+                width: paintedWidth
+                verticalAlignment: YText.AlignVCenter
+                color: YColors.grayText
+                font.pixelSize: 14
+                elide: Text.ElideNone
+                wrapMode: Text.NoWrap
+                text: currentTranslationLyric
+                onTextChanged: {
+                    x = 0
+                    if (id_translation_lyric_text.paintedWidth > id_translation_lyric_view.width)
+                        id_translation_lyric_marquee.restart()
+                }
+
+                SequentialAnimation {
+                    id: id_translation_lyric_marquee
+                    loops: Animation.Infinite
+                    running: id_translation_lyric_text.paintedWidth > id_translation_lyric_view.width
+                    NumberAnimation {
+                        target: id_translation_lyric_text
+                        property: "x"
+                        from: 0
+                        to: -(id_translation_lyric_text.paintedWidth - id_translation_lyric_view.width)
+                        duration: Math.max(1500, (id_translation_lyric_text.paintedWidth - id_translation_lyric_view.width) * 28)
+                        easing.type: Easing.Linear
+                    }
+                    PauseAnimation { duration: 700 }
+                    PropertyAction { target: id_translation_lyric_text; property: "x"; value: 0 }
+                    PauseAnimation { duration: 700 }
+                }
+            }
+        }
     }
 
     YMouseArea {
@@ -97,7 +212,7 @@ Item {
         id: id_control_row
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
-        anchors.bottomMargin: 22
+        anchors.bottomMargin: 30
         spacing: 8
 
         YIconButton {

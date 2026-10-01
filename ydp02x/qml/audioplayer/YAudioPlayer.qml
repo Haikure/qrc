@@ -218,6 +218,7 @@ Item {
 
         YAudioPlayerPlayBar {
             id: id_play_bar
+            z: 2
         }
 
         YProgressBar {
@@ -276,7 +277,7 @@ Item {
             id: id_progress_seek_area
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.rightMargin: id_play_bar.state === "show" ? 154 : 0
+            anchors.rightMargin: id_play_bar.state === "show" ? 170 : 0
             anchors.bottom: parent.bottom
             height: 26
             z: 1
