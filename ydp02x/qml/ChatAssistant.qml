@@ -41,12 +41,22 @@ YPage {
     property int _followStableFrames: 0
     property real _followLastContentHeight: -1
     property var _mathProbeRequest: null
+    property int _deferredScrollGeneration: 0
+    property bool _richContentAnchorPending: false
+
+    function _cancelDeferredScroll() {
+        _deferredScrollGeneration++;
+        streamThrottle.scrollScheduled = false;
+    }
 
     function _beginRichContentCommit() {
-        if (id_chat_listview.moving)
+        if (id_chat_listview.moving) {
+            _richContentAnchorPending = true;
             return;
+        }
         if (id_rich_content_anchor_timer.running)
             return;
+        _richContentAnchorPending = false;
 
         var distanceToBottom = id_chat_listview.contentHeight - id_chat_listview.contentY - id_chat_listview.height;
         if (!id_chat_listview.userScrolledUp && distanceToBottom <= id_chat_listview.bottomThreshold) {
@@ -510,6 +520,7 @@ YPage {
     }
 
     function _followLatestMessage() {
+        _cancelDeferredScroll();
         _followAttempts = 0;
         _followStableFrames = 0;
         _followLastContentHeight = -1;
@@ -520,16 +531,25 @@ YPage {
     }
 
     function _scheduleScrollToBottom() {
-        if (id_chat_listview.userScrolledUp) {
-            id_chat_listview.hasNewMessages = true;
+        if (id_chat_listview.userScrolledUp || id_chat_listview.moving || id_chat_listview._flicking) {
+            if (id_chat_listview.userScrolledUp)
+                id_chat_listview.hasNewMessages = true;
             return;
         }
         if (streamThrottle.scrollScheduled)
             return;
         streamThrottle.scrollScheduled = true;
+        var generation = ++_deferredScrollGeneration;
         Qt.callLater(function () {
-            id_chat_listview.scrollToBottom(true);
+            if (generation !== _deferredScrollGeneration)
+                return;
             streamThrottle.scrollScheduled = false;
+            if (id_chat_listview.userScrolledUp || id_chat_listview.moving || id_chat_listview._flicking) {
+                if (id_chat_listview.userScrolledUp)
+                    id_chat_listview.hasNewMessages = true;
+                return;
+            }
+            id_chat_listview.scrollToBottom(true);
         });
     }
 
@@ -1122,7 +1142,9 @@ YPage {
                 spacing: 10
                 // Retain several long neighbors; rich delegates outside the preload window stay lightweight.
                 cacheBuffer: Math.min(2400, Math.max(1600, Math.round(height * 10)))
-                reuseItems: true
+                // Message delegates contain asynchronous, variable-height rich content.
+                // Reusing them makes a pooled delegate briefly report the previous row's
+                // height while its Loader and rich-content tree are being rebound.
 
                 add: Transition {
                     enabled: !id_chat_assistant_page.isGenerating && !id_chat_assistant_page._layoutStabilizing
@@ -1151,8 +1173,14 @@ YPage {
                 onMovementStarted: {
                     if (!_programmaticScroll) {
                         _flicking = true;
-                        if (id_rich_content_anchor_timer.running)
+                        _cancelDeferredScroll();
+                        id_bottom_scroll_animation.stop();
+                        if (id_rich_content_anchor_timer.running) {
                             id_rich_content_anchor_timer.stop();
+                            id_rich_content_anchor_timer.anchorIndex = -1;
+                            id_chat_assistant_page._richContentAnchorPending = true;
+                        }
+                        id_tool_expansion_anchor_timer.stop();
                         if (_navigationTargetIndex >= 0) {
                             _navigationTargetIndex = -1;
                             _navigationJumping = false;
@@ -1170,7 +1198,10 @@ YPage {
                 onMovementEnded: {
                     _flicking = false;
                     updateUserScrolledState();
-                    id_list_bounds_guard_timer.restart();
+                    if (id_chat_assistant_page._richContentAnchorPending)
+                        id_chat_assistant_page._beginRichContentCommit();
+                    if (!id_rich_content_anchor_timer.running)
+                        id_list_bounds_guard_timer.restart();
                 }
                 onContentYChanged: {
                     if (_programmaticScroll)
@@ -1231,7 +1262,8 @@ YPage {
                 onContentHeightChanged: {
                     if (_layoutStabilizing)
                         id_layout_stabilize_timer.restart();
-                    if (!moving && !id_rich_content_anchor_timer.running)
+                    if (!moving && !id_rich_content_anchor_timer.running
+                            && !id_chat_assistant_page._richContentAnchorPending)
                         id_list_bounds_guard_timer.restart();
                 }
 
@@ -1664,6 +1696,7 @@ YPage {
             if ((ticks >= 10 && stableFrames >= 3) || ticks >= 30) {
                 stop();
                 anchorIndex = -1;
+                id_chat_assistant_page._richContentAnchorPending = false;
                 id_list_bounds_guard_timer.restart();
             }
         }
@@ -1674,7 +1707,8 @@ YPage {
         interval: 0
         repeat: false
         onTriggered: {
-            if (id_chat_listview.moving || id_rich_content_anchor_timer.running)
+            if (id_chat_listview.moving || id_rich_content_anchor_timer.running
+                    || id_chat_assistant_page._richContentAnchorPending)
                 return;
             id_chat_listview.forceLayout();
             var minY = id_chat_listview.originY;
@@ -1686,7 +1720,6 @@ YPage {
                 id_chat_listview.contentY = boundedY;
                 id_chat_listview._programmaticScroll = false;
             }
-            id_chat_listview.returnToBounds();
         }
     }
 
@@ -1721,6 +1754,10 @@ YPage {
         interval: 20
         repeat: true
         onTriggered: {
+            if (id_chat_listview.moving || id_chat_listview._flicking || id_chat_listview.userScrolledUp) {
+                stop();
+                return;
+            }
             id_chat_listview.forceLayout();
             id_chat_listview.scrollToBottom();
             _followAttempts++;
@@ -2029,9 +2066,7 @@ YPage {
             id_chat_assistant_page.isGenerating = true;
             finalizeLastAssistantIfNeeded();
             _upsertToolEntry(toolCallId, "正在搜索：" + query, "", "searching", false);
-            Qt.callLater(function () {
-                id_chat_listview.scrollToBottom();
-            });
+            _scheduleScrollToBottom();
         }
         function onTavilySearchFinished(toolCallId, success, summary, resultText) {
             updateCardByToolCallId(toolCallId, {
@@ -2047,9 +2082,7 @@ YPage {
             id_chat_assistant_page.isGenerating = true;
             finalizeLastAssistantIfNeeded();
             _upsertToolEntry(toolCallId, "请求执行：" + command, command, "pending", false);
-            Qt.callLater(function () {
-                id_chat_listview.scrollToBottom();
-            });
+            _scheduleScrollToBottom();
             shellConfirmDialog.show(toolCallId, command);
         }
         function onShellCommandStarted(toolCallId, command) {
@@ -2081,9 +2114,7 @@ YPage {
                 "toolState": "",
                 "historyIndex": -1
             });
-            Qt.callLater(function () {
-                id_chat_listview.scrollToBottom();
-            });
+            _scheduleScrollToBottom();
         }
         function onRequestCancelled() {
             _completeLastReasoningCard();
