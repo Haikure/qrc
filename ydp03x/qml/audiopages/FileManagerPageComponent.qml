@@ -13,8 +13,8 @@ import "../components"
 //
 // 能力范围（仅音频/视频，图片/文本暂不支持 → toast 提示）：
 //   - 目录浏览 / 返回上级
-//   - 音频(mp3/flac/m4a/wav/ogg/aac) → fileManager.playFromView → MusicPlayer → mpv
-//   - 视频(avi/mp4/mov/flv/mkv/webm)  → externalPlayer.open → mpv
+//   - 音频(mp3/flac/m4a/wav/ogg/aac) → soundCenter.playMusic → 系统音频播放器
+//   - 视频(avi/mp4/mov/flv/mkv/webm) → 内嵌 FFmpeg，失败时回退 MPV
 //   - 删除（确认对话框）/ 重命名（YInputPage 键盘）
 // =====================================================================
 
@@ -30,6 +30,7 @@ YBackButtonPage {
     property bool operatingIsDir: false
     // 图片/文本查看器是否正在展示（展示期间隐藏左侧编辑/删除工具栏）
     property bool viewerShowing: false
+    property int videoRequestId: 0
 
     // 扩展名 → 处理类型查找表
     readonly property var fileHandlers: {
@@ -56,15 +57,18 @@ YBackButtonPage {
         "webp": "image"
     }
 
-    // 按扩展名分发（音频/视频→mpv；文本/图片→内置查看器）
+    // 按扩展名分发（音频→系统播放器；视频→FFmpeg；文本/图片→内置查看器）
     function openByType(fileName, extName) {
         let type = fileHandlers[extName];
         if (type === "play") {
-            fileManager.playFromView(fileName);
-            baseSignals.showToast("mpv 播放音频…", YColors.green);
+            soundCenter.playMusic(fileManager.getCurrentPathString() + "/" + fileName);
+            baseSignals.showToast("正在播放音频…", YColors.green);
         } else if (type === "video") {
+            id_video_loader.active = false;
             externalPlayer.open(fileName);
-            baseSignals.showToast("mpv 播放视频…", YColors.green);
+            videoRequestId = externalPlayer.requestId;
+            viewerShowing = true;
+            id_video_loader.active = true;
         } else if (type === "text") {
             textReader.open(fileName);
             id_container_index.showViewer("PenModsTextViewer");
@@ -73,6 +77,39 @@ YBackButtonPage {
             id_container_index.showViewer("PenModsImageViewer");
         } else {
             baseSignals.showToast("暂不支持该格式", YColors.yellow);
+        }
+    }
+
+    Loader {
+        id: id_video_loader
+        anchors.fill: parent
+        z: 100
+        active: false
+        source: "ExternalPlayer.qml"
+        onLoaded: {
+            // The Loader owns this page and releases it by setting active=false.
+            item.destroyOnBack = false;
+            item.backButtonClicked.connect(function () {
+                id_video_loader.active = false;
+                id_container_index.viewerShowing = false;
+            });
+            item.show();
+        }
+        onStatusChanged: {
+            if (status === Loader.Error && id_container_index.visible) {
+                externalPlayer.fallbackToMpv(id_container_index.videoRequestId, "Cannot load playback page");
+                if (externalPlayer.fallbackError.length)
+                    baseSignals.showToast(externalPlayer.fallbackError, YColors.yellow);
+                active = false;
+                id_container_index.viewerShowing = false;
+            }
+        }
+    }
+
+    onVisibleChanged: {
+        if (!visible) {
+            id_video_loader.active = false;
+            viewerShowing = false;
         }
     }
 
