@@ -4,23 +4,25 @@ YInputTextCharsModelBase {
     id: root
     skipPressedAction: true
 
-    // 定义信号
-    signal keyClicked(string text)
+    compact: compactLayout
+    columns: 10
 
-    // 定义键盘的字符顺序
-    property var keyboardLayout: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"]
+    // 原生布局：字母表顺序，每行 5 个
+    readonly property var nativeRows: [
+        ["a", "b", "c", "d", "e"],
+        ["f", "g", "h", "i", "j"],
+        ["k", "l", "m", "n", "o"],
+        ["p", "q", "r", "s", "t"],
+        ["u", "v", "w", "x", "y"],
+        ["z"]
+    ]
 
-    Repeater {
-        model: parent.keyboardLayout // 绑定上面的数组
+    // 紧凑布局：QWERTY 排列，常用字母集中在顶部
+    readonly property var compactRows: [
+        ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"],
+        ["a", "s", "d", "f", "g", "h", "j", "k", "l"],
+        ["z", "x", "c", "v", "b", "n", "m"]
+    ]
 
-        delegate: YInputTextItem {
-            // modelData 就是数组里的字符串 "q", "w" 等
-            text: modelData
-
-            // 统一处理点击事件
-            onClicked: {
-                root.keyClicked(text);
-            }
-        }
-    }
+    rows: compactLayout ? compactRows : nativeRows
 }

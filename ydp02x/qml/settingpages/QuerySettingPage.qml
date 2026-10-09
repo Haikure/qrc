@@ -60,6 +60,34 @@ YSettingItemPage {
                 implicitHeight: 4
             }
 
+            YText {
+                id: id_custom_dict_title
+                font.pixelSize: 16
+                font.italic: true
+                color: YColors.grayText
+                wrapMode: YText.Wrap
+                lineHeightMode: YTextBase.FixedHeight
+                lineHeight: 24
+                width: parent.width
+                text: "自定义词典"
+            }
+
+            DescribedClickableTextBox {
+                title: "自造词典"
+                describe: customDict.dictionaries.length > 0
+                          ? "查询时与内置词典一起显示"
+                          : "把 .dat 放到 /userdisk/PenMods/dicts/"
+                value: customDict.dictionaries.length > 0
+                       ? "%1 本".arg(customDict.dictionaries.length)
+                       : "未安装"
+                describeItem.width: width - 90
+                onClicked: openSettingPage("CustomDictPage")
+            }
+
+            YSpacingForColumn {
+                implicitHeight: 20
+            }
+
         }
 
     }

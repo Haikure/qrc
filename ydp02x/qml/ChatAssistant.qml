@@ -40,23 +40,20 @@ YPage {
     property int _followAttempts: 0
     property int _followStableFrames: 0
     property real _followLastContentHeight: -1
-    property var _mathProbeRequest: null
-    property int _deferredScrollGeneration: 0
-    property bool _richContentAnchorPending: false
+    // 右侧手势条宽度 = 气泡右侧留白。
+    readonly property int  chatListRightMargin: 2
+    readonly property int  bubbleRightInset: 8
+    readonly property real rightGestureWidth: chatListRightMargin + bubbleRightInset
 
-    function _cancelDeferredScroll() {
-        _deferredScrollGeneration++;
-        streamThrottle.scrollScheduled = false;
-    }
+    // 当前正在流式接收的思维链行下标（-1 表示没有）
+    property int _activeReasoningIndex: -1
+    property var _mathProbeRequest: null
 
     function _beginRichContentCommit() {
-        if (id_chat_listview.moving) {
-            _richContentAnchorPending = true;
+        if (id_chat_listview.moving)
             return;
-        }
         if (id_rich_content_anchor_timer.running)
             return;
-        _richContentAnchorPending = false;
 
         var distanceToBottom = id_chat_listview.contentHeight - id_chat_listview.contentY - id_chat_listview.height;
         if (!id_chat_listview.userScrolledUp && distanceToBottom <= id_chat_listview.bottomThreshold) {
@@ -306,16 +303,19 @@ YPage {
     }
 
     function _completeLastReasoningCard() {
-        for (var i = chatModel.count - 1; i >= 0; i--) {
-            var item = chatModel.get(i);
-            if (item.isReasoning && !item.isComplete) {
-                _beginRichContentCommit();
-                chatModel.setProperty(i, "isComplete", true);
+        _flushReasoningBuffer();
+        if (_activeReasoningIndex >= 0 && _activeReasoningIndex < chatModel.count) {
+            var item = chatModel.get(_activeReasoningIndex);
+            if (item.isReasoning) {
+                if (!item.isComplete) {
+                    _beginRichContentCommit();
+                    chatModel.setProperty(_activeReasoningIndex, "isComplete", true);
+                }
+                _activeReasoningIndex = -1;
                 return;
             }
-            if (item.isUser)
-                return;
         }
+        _activeReasoningIndex = -1;
     }
 
     function _makeReasoningEntry(content) {
@@ -469,13 +469,163 @@ YPage {
         return -1;
     }
 
+    // 把一条历史消息渲染成聊天行。
+    function _renderHistoryRow(m, idx, toolNameMap) {
+        if (m.role === 'system')
+            return;
+        if (m.role === 'tool') {
+            var toolName = toolNameMap[m.toolCallId] || "";
+            var label = toolName === "shell_exec" ? "命令执行结果" : "搜索结果";
+            _upsertToolEntry(m.toolCallId || "", label, m.content, "done", true);
+            if (chatModel.count > 0)
+                chatModel.setProperty(chatModel.count - 1, "historyIndex", idx);
+            return;
+        }
+        if (m.role === 'assistant' && m.reasoning) {
+            chatModel.append(_makeReasoningEntry(m.reasoning));
+            chatModel.setProperty(chatModel.count - 1, "isComplete", true);
+        }
+        if (m.role === 'assistant' && m.toolCallsJson && m.toolCallsJson !== "") {
+            if (!m.content || m.content.trim() === "")
+                return;
+        }
+        var isUser = m.role === 'user';
+        var messageAttachments = [];
+        var messageParts = m.parts || [];
+        for (var partIndex = 0; partIndex < messageParts.length; partIndex++) {
+            if (messageParts[partIndex].type === "image_url" || messageParts[partIndex].type === "file")
+                messageAttachments.push(messageParts[partIndex]);
+        }
+        chatModel.append({
+            "text": isUser ? m.content : "",
+            "attachmentsJson": JSON.stringify(messageAttachments),
+            "isUser": isUser,
+            "raw_text": m.content,
+            "reasoning_text": "",
+            "isComplete": true,
+            "isThinking": false,
+            "isToolCall": false,
+            "toolCallId": "",
+            "toolState": "",
+            "historyIndex": idx
+        });
+    }
+
+    function _buildToolNameMap(history, fromIndex) {
+        var map = {};
+        for (var i = fromIndex; i < history.length; i++) {
+            var msg = history[i];
+            if (msg.role !== 'assistant' || !msg.toolCallsJson)
+                continue;
+            try {
+                var tcs = JSON.parse(msg.toolCallsJson);
+                for (var k = 0; k < tcs.length; k++) {
+                    if (tcs[k].id && tcs[k]["function"] && tcs[k]["function"].name)
+                        map[tcs[k].id] = tcs[k]["function"].name;
+                }
+            } catch (e) {}
+        }
+        return map;
+    }
+
+    // 生成这一轮消息的行签名，用于和屏幕上的行比对。
+    function _turnSignatureFromHistory(history, historyStart) {
+        var parts = [];
+        for (var idx = historyStart; idx < history.length; idx++) {
+            var m = history[idx];
+            if (m.role === 'system')
+                continue;
+            if (m.role === 'tool') {
+                parts.push("T");
+                continue;
+            }
+            if (m.role === 'assistant' && m.reasoning)
+                parts.push("R:" + m.reasoning);
+            if (m.role === 'assistant' && m.toolCallsJson && m.toolCallsJson !== "") {
+                if (!m.content || m.content.trim() === "")
+                    continue;
+            }
+            parts.push((m.role === 'user' ? "U:" : "A:") + (m.content || ""));
+        }
+        return parts.join("\u0001");
+    }
+
+    function _turnSignatureFromModel(modelStart) {
+        var parts = [];
+        for (var i = modelStart; i < chatModel.count; i++) {
+            var row = chatModel.get(i);
+            var kind = row.isUser ? "U:" : row.isToolCall ? "T" : row.isReasoning ? "R:" : "A:";
+            var text = row.isToolCall ? "" : (row.raw_text || "");
+            parts.push(kind + text + (row.isComplete ? "" : "\u0002"));
+        }
+        return parts.join("\u0001");
+    }
+
+    // 以落库的历史为准，不一致时重建这一轮的行。
+    function _rebuildCurrentTurnRows() {
+        if (!chatbot || !chatbot.messages)
+            return;
+        var history = chatbot.messages;
+        if (history.length === 0)
+            return;
+
+        var historyStart = -1;
+        for (var i = history.length - 1; i >= 0; i--) {
+            if (history[i].role === 'user') {
+                historyStart = i;
+                break;
+            }
+        }
+        if (historyStart < 0)
+            return;
+
+        var modelStart = -1;
+        for (var j = chatModel.count - 1; j >= 0; j--) {
+            if (chatModel.get(j).isUser) {
+                modelStart = j;
+                break;
+            }
+        }
+        if (modelStart < 0)
+            return;
+
+        if (_turnSignatureFromHistory(history, historyStart) === _turnSignatureFromModel(modelStart))
+            return;
+
+        var toolNameMap = _buildToolNameMap(history, historyStart);
+        var removed = chatModel.count - modelStart;
+        if (removed > 0)
+            chatModel.remove(modelStart, removed);
+        for (var idx = historyStart; idx < history.length; idx++)
+            _renderHistoryRow(history[idx], idx, toolNameMap);
+        _scheduleScrollToBottom();
+    }
+
     function _resetStreamState() {
         throttlingTimer.stop();
+        reasoningFlushTimer.stop();
         generationDoneTimer.stop();
         streamThrottle.content = "";
         streamThrottle.lastIndex = -1;
         streamThrottle.targetKind = "";
+        streamThrottle.reasoning = "";
+        streamThrottle.reasoningIndex = -1;
         streamThrottle.endProcessed = false;
+        _activeReasoningIndex = -1;
+    }
+
+    // 思维链也按帧合并写入，避免逐块重排。
+    function _flushReasoningBuffer() {
+        var text = streamThrottle.reasoning;
+        streamThrottle.reasoning = "";
+        var index = streamThrottle.reasoningIndex;
+        streamThrottle.reasoningIndex = -1;
+        if (text === "" || index < 0 || index >= chatModel.count)
+            return;
+        var item = chatModel.get(index);
+        if (!item || !item.isReasoning)
+            return;
+        chatModel.setProperty(index, "raw_text", (item.raw_text || "") + text);
     }
 
     function _flushStreamBuffer() {
@@ -493,8 +643,7 @@ YPage {
                                && (targetKind === "" || (targetKind === "thinking" && item.isThinking)
                                    || (targetKind === "answer" && !item.isThinking));
         if (!targetStillValid) {
-            // The thinking row can be removed when a delayed reasoning chunk arrives.
-            // Never write the buffered answer into the row now occupying its old index.
+            // The thinking row may be gone; re-locate the answer row.
             index = _findCurrentAnswerIndex();
             if (index < 0) {
                 _appendAnswerPlaceholder();
@@ -520,36 +669,25 @@ YPage {
     }
 
     function _followLatestMessage() {
-        _cancelDeferredScroll();
         _followAttempts = 0;
         _followStableFrames = 0;
         _followLastContentHeight = -1;
         id_chat_listview.userScrolledUp = false;
-        id_chat_listview.hasNewMessages = false;
+        id_chat_listview.showScrollToBottom = false;
         id_chat_listview.scrollToBottom();
         id_follow_latest_timer.restart();
     }
 
     function _scheduleScrollToBottom() {
-        if (id_chat_listview.userScrolledUp || id_chat_listview.moving || id_chat_listview._flicking) {
-            if (id_chat_listview.userScrolledUp)
-                id_chat_listview.hasNewMessages = true;
+        // 用户手动滚动时不自动贴底。
+        if (id_chat_listview.userScrolledUp || id_chat_listview.userInteracting)
             return;
-        }
         if (streamThrottle.scrollScheduled)
             return;
         streamThrottle.scrollScheduled = true;
-        var generation = ++_deferredScrollGeneration;
         Qt.callLater(function () {
-            if (generation !== _deferredScrollGeneration)
-                return;
             streamThrottle.scrollScheduled = false;
-            if (id_chat_listview.userScrolledUp || id_chat_listview.moving || id_chat_listview._flicking) {
-                if (id_chat_listview.userScrolledUp)
-                    id_chat_listview.hasNewMessages = true;
-                return;
-            }
-            id_chat_listview.scrollToBottom(true);
+            id_chat_listview.autoFollowBottom();
         });
     }
 
@@ -566,11 +704,13 @@ YPage {
 
     function finalizeLastAssistantIfNeeded() {
         throttlingTimer.stop();
+        _completeLastReasoningCard();
         _flushStreamBuffer();
         var lastIdx = chatModel.count - 1;
         if (lastIdx >= 0) {
             var lastItem = chatModel.get(lastIdx);
-            if (!lastItem.isUser && !lastItem.isComplete && !lastItem.isThinking && !lastItem.isToolCall) {
+            if (!lastItem.isUser && !lastItem.isComplete && !lastItem.isThinking && !lastItem.isToolCall
+                    && !lastItem.isReasoning) {
                 var raw = lastItem.raw_text || "";
                 chatModel.set(lastIdx, {
                     "text": "",
@@ -624,59 +764,9 @@ YPage {
         if (!chatbot || !chatbot.messages)
             return;
         var history = chatbot.messages;
-        var toolNameMap = {};
-        for (var i = 0; i < history.length; i++) {
-            var msg = history[i];
-            if (msg.role === 'assistant' && msg.toolCallsJson) {
-                try {
-                    var tcs = JSON.parse(msg.toolCallsJson);
-                    for (var k = 0; k < tcs.length; k++) {
-                        if (tcs[k].id && tcs[k]["function"] && tcs[k]["function"].name)
-                            toolNameMap[tcs[k].id] = tcs[k]["function"].name;
-                    }
-                } catch (e) {}
-            }
-        }
-        for (var idx = 0; idx < history.length; idx++) {
-            var m = history[idx];
-            if (m.role === 'system')
-                continue;
-            if (m.role === 'tool') {
-                var toolName = toolNameMap[m.toolCallId] || "";
-                var label = toolName === "shell_exec" ? "命令执行结果" : "搜索结果";
-                _upsertToolEntry(m.toolCallId || "", label, m.content, "done", true);
-                chatModel.setProperty(chatModel.count - 1, "historyIndex", idx);
-                continue;
-            }
-            if (m.role === 'assistant' && m.reasoning) {
-                chatModel.append(_makeReasoningEntry(m.reasoning));
-                chatModel.setProperty(chatModel.count - 1, "isComplete", true);
-            }
-            if (m.role === 'assistant' && m.toolCallsJson && m.toolCallsJson !== "") {
-                if (!m.content || m.content.trim() === "")
-                    continue;
-            }
-            var isUser = m.role === 'user';
-            var messageAttachments = [];
-            var messageParts = m.parts || [];
-            for (var partIndex = 0; partIndex < messageParts.length; partIndex++) {
-                if (messageParts[partIndex].type === "image_url" || messageParts[partIndex].type === "file")
-                    messageAttachments.push(messageParts[partIndex]);
-            }
-            chatModel.append({
-                "text": isUser ? m.content : "",
-                "attachmentsJson": JSON.stringify(messageAttachments),
-                "isUser": isUser,
-                "raw_text": m.content,
-                "reasoning_text": "",
-                "isComplete": true,
-                "isThinking": false,
-                "isToolCall": false,
-                "toolCallId": "",
-                "toolState": "",
-                "historyIndex": idx
-            });
-        }
+        var toolNameMap = _buildToolNameMap(history, 0);
+        for (var idx = 0; idx < history.length; idx++)
+            _renderHistoryRow(history[idx], idx, toolNameMap);
         _layoutStabilizing = true;
         id_chat_listview.forceLayout();
         id_chat_listview.scrollToTop();
@@ -889,11 +979,14 @@ YPage {
                 chatbot.sendMessage(content, filesJson);
             }
 
-            if (messageAttachments.length > 0 && chatbot.messages.length > 0) {
-                var savedMessage = chatbot.messages[chatbot.messages.length - 1];
-                var savedParts = savedMessage.parts || [];
-                if (savedParts.length > 0)
-                    chatModel.setProperty(userModelIndex, "attachmentsJson", JSON.stringify(savedParts));
+            if (messageAttachments.length > 0) {
+                // chatbot.messages 开销大，只取一次。
+                var savedMessages = chatbot.messages;
+                if (savedMessages.length > 0) {
+                    var savedParts = savedMessages[savedMessages.length - 1].parts || [];
+                    if (savedParts.length > 0)
+                        chatModel.setProperty(userModelIndex, "attachmentsJson", JSON.stringify(savedParts));
+                }
             }
 
             if (typeof chatbot.getSessions === 'function') {
@@ -1133,18 +1226,17 @@ YPage {
                 id: id_chat_listview
                 anchors.fill: parent
                 anchors.leftMargin: 44
-                anchors.rightMargin: 2
+                anchors.rightMargin: id_chat_assistant_page.chatListRightMargin
                 anchors.topMargin: 2
                 anchors.bottomMargin: 2
 
                 clip: true
                 model: chatModel
                 spacing: 10
-                // Retain several long neighbors; rich delegates outside the preload window stay lightweight.
-                cacheBuffer: Math.min(2400, Math.max(1600, Math.round(height * 10)))
-                // Message delegates contain asynchronous, variable-height rich content.
-                // Reusing them makes a pooled delegate briefly report the previous row's
-                // height while its Loader and rich-content tree are being rebound.
+                // 缓存约 4 屏，避免常驻 delegate 过多。
+                cacheBuffer: Math.min(1200, Math.max(600, Math.round(height * 4)))
+                reuseItems: true
+                boundsBehavior: Flickable.StopAtBounds
 
                 add: Transition {
                     enabled: !id_chat_assistant_page.isGenerating && !id_chat_assistant_page._layoutStabilizing
@@ -1165,63 +1257,110 @@ YPage {
                 }
 
                 property bool userScrolledUp: false
-                property bool hasNewMessages: false
+                // 是否显示「滑到底部」按钮。
+                property bool showScrollToBottom: false
                 property bool _programmaticScroll: false
                 property bool _flicking: false
+                // 用户是否正在拖动或滑动列表。
+                readonly property bool userInteracting: dragging || flicking
                 readonly property real bottomThreshold: 50
+                // 显示按钮的离底距离阈值。
+                readonly property real scrollHintDistance: Math.max(height * 1.2, 120)
+                // 显示按钮的最小滑动速度（px/ms）。
+                readonly property real scrollHintVelocity: 0.5
+                property real _lastTrackedContentY: 0
+                property double _lastTrackedTime: 0
+                // 手势开始时只记录速度基准。
+                property bool _trackingFresh: true
 
                 onMovementStarted: {
-                    if (!_programmaticScroll) {
-                        _flicking = true;
-                        _cancelDeferredScroll();
-                        id_bottom_scroll_animation.stop();
-                        if (id_rich_content_anchor_timer.running) {
-                            id_rich_content_anchor_timer.stop();
-                            id_rich_content_anchor_timer.anchorIndex = -1;
-                            id_chat_assistant_page._richContentAnchorPending = true;
-                        }
-                        id_tool_expansion_anchor_timer.stop();
-                        if (_navigationTargetIndex >= 0) {
-                            _navigationTargetIndex = -1;
-                            _navigationJumping = false;
-                            _pendingJumpIndex = -1;
-                            id_navigation_target_expiry_timer.stop();
-                        }
-                        if (id_follow_latest_timer.running)
-                            id_follow_latest_timer.stop();
-                        if (_layoutStabilizing) {
-                            _layoutStabilizing = false;
-                            id_layout_stabilize_timer.stop();
-                        }
+                    // 只处理真实手势产生的滚动。
+                    if (!dragging && !flicking)
+                        return;
+
+                    _flicking = true;
+                    id_bottom_scroll_animation.stop();
+                    _programmaticScroll = false;
+                    if (id_rich_content_anchor_timer.running)
+                        id_rich_content_anchor_timer.stop();
+                    if (id_follow_latest_timer.running)
+                        id_follow_latest_timer.stop();
+                    if (_navigationTargetIndex >= 0) {
+                        _navigationTargetIndex = -1;
+                        _navigationJumping = false;
+                        _pendingJumpIndex = -1;
+                        id_navigation_target_expiry_timer.stop();
                     }
+                    if (_layoutStabilizing) {
+                        _layoutStabilizing = false;
+                        id_layout_stabilize_timer.stop();
+                    }
+                    _lastTrackedContentY = contentY;
+                    _lastTrackedTime = Date.now();
+                    _trackingFresh = true;
                 }
                 onMovementEnded: {
                     _flicking = false;
                     updateUserScrolledState();
-                    if (id_chat_assistant_page._richContentAnchorPending)
-                        id_chat_assistant_page._beginRichContentCommit();
-                    if (!id_rich_content_anchor_timer.running)
-                        id_list_bounds_guard_timer.restart();
+                    id_list_bounds_guard_timer.restart();
                 }
                 onContentYChanged: {
                     if (_programmaticScroll)
                         return;
-                    if (id_chat_assistant_page._navigationTargetIndex >= 0 && (moving || _flicking)) {
+                    // 只在真实手势下取消导航跳转。
+                    if (id_chat_assistant_page._navigationTargetIndex >= 0 && (_flicking || dragging)) {
                         id_chat_assistant_page._navigationTargetIndex = -1;
                         id_chat_assistant_page._navigationJumping = false;
                         id_chat_assistant_page._pendingJumpIndex = -1;
                         id_message_jump_timer.stop();
                     }
-                    if (!_flicking && !moving)
+                    // 只跟踪真实手势的位移。
+                    if (!_flicking && !dragging)
                         return;
-                    updateUserScrolledState();
+                    trackScrollDirection();
                 }
 
                 function updateUserScrolledState() {
                     var distToEnd = contentHeight - contentY - height;
                     userScrolledUp = distToEnd > bottomThreshold;
                     if (!userScrolledUp)
-                        hasNewMessages = false;
+                        showScrollToBottom = false;
+                }
+
+                // 按 contentY 的方向与速度决定按钮显隐。
+                function trackScrollDirection() {
+                    var now = Date.now();
+                    var distToEnd = contentHeight - contentY - height;
+                    userScrolledUp = distToEnd > bottomThreshold;
+                    if (!userScrolledUp) {
+                        showScrollToBottom = false;
+                        _trackingFresh = true;
+                        return;
+                    }
+
+                    if (_trackingFresh) {
+                        _trackingFresh = false;
+                        _lastTrackedContentY = contentY;
+                        _lastTrackedTime = now;
+                        return;
+                    }
+
+                    // 采样间隔不足时先跳过本次计算。
+                    var dt = now - _lastTrackedTime;
+                    if (dt < 48)
+                        return;
+
+                    var dy = contentY - _lastTrackedContentY;
+                    _lastTrackedContentY = contentY;
+                    _lastTrackedTime = now;
+
+                    if (dy < -1) {
+                        // 往历史方向滑动时收起按钮。
+                        showScrollToBottom = false;
+                        return;
+                    }
+                    if (dy > 1 && distToEnd > scrollHintDistance && (dy / dt) >= scrollHintVelocity)
+                        showScrollToBottom = true;
                 }
 
                 function scrollToTop() {
@@ -1230,9 +1369,20 @@ YPage {
                     positionViewAtBeginning();
                     _programmaticScroll = false;
                     userScrolledUp = false;
-                    hasNewMessages = false;
+                    showScrollToBottom = false;
                 }
 
+                // 流式回复时自动贴底。
+                function autoFollowBottom() {
+                    if (userScrolledUp || userInteracting)
+                        return;
+                    id_bottom_scroll_animation.stop();
+                    _programmaticScroll = true;
+                    positionViewAtEnd();
+                    _programmaticScroll = false;
+                }
+
+                // 用户主动跳到底部。
                 function scrollToBottom(animated) {
                     id_bottom_scroll_animation.stop();
                     var targetY = Math.max(originY, originY + contentHeight - height);
@@ -1247,7 +1397,7 @@ YPage {
                         _programmaticScroll = false;
                     }
                     userScrolledUp = false;
-                    hasNewMessages = false;
+                    showScrollToBottom = false;
                 }
 
                 NumberAnimation {
@@ -1262,8 +1412,7 @@ YPage {
                 onContentHeightChanged: {
                     if (_layoutStabilizing)
                         id_layout_stabilize_timer.restart();
-                    if (!moving && !id_rich_content_anchor_timer.running
-                            && !id_chat_assistant_page._richContentAnchorPending)
+                    if (!moving && !id_rich_content_anchor_timer.running)
                         id_list_bounds_guard_timer.restart();
                 }
 
@@ -1277,31 +1426,33 @@ YPage {
                     width: id_chat_listview.width
                 }
 
+                // 「滑到底部」按钮。
                 Rectangle {
-                    width: 120
-                    height: 36
-                    radius: 18
+                    width: 88
+                    height: 26
+                    radius: 13
                     color: "#2B5278"
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.bottom: parent.bottom
-                    anchors.bottomMargin: 20
-                    opacity: id_chat_listview.hasNewMessages ? 1 : 0
+                    anchors.bottomMargin: 8
+                    opacity: id_chat_listview.showScrollToBottom ? 1 : 0
+                    visible: opacity > 0
                     Behavior on opacity {
                         NumberAnimation {
-                            duration: 200
+                            duration: 150
                         }
                     }
 
                     Text {
                         text: "滑到底部"
                         color: "white"
-                        font.pixelSize: 14
+                        font.pixelSize: 11
                         font.family: qmlGlobal.fontFamilyZhCn
                         anchors.centerIn: parent
                     }
                     MouseArea {
                         anchors.fill: parent
-                        onClicked: id_chat_listview.scrollToBottom()
+                        onClicked: id_chat_listview.scrollToBottom(true)
                     }
                 }
 
@@ -1320,6 +1471,7 @@ YPage {
                     textureCacheEnabled: id_chat_assistant_page.bubbleTextureCacheEnabled
                     renderMode: chatbot.bubbleRenderMode
                     listMoving: id_chat_listview.moving
+                    listScrolledUp: id_chat_listview.userScrolledUp
                     navigationJumping: id_chat_assistant_page._navigationJumping
                     messageIndex: model.index
                     listWidth: id_chat_listview.width
@@ -1361,8 +1513,11 @@ YPage {
             }
         }
 
+        // 左边条：靠声明顺序压在按钮之下。
         EdgeSwipeGesture {
+            id: id_left_edge_gesture
             edge: "left"
+            edgeWidth: id_chat_assistant_page.rightGestureWidth
             gestureEnabled: !qmlGlobal.inputPageShowing
             anchors {
                 left: parent.left
@@ -1377,9 +1532,16 @@ YPage {
                     id_session_panel.open();
                 }
             }
+            onTriggeredOutward: {
+                if (id_session_panel.isOpen)
+                    id_session_panel.close();
+            }
         }
+        // 右边条：宽度正好铺满气泡右侧留白。
         EdgeSwipeGesture {
+            id: id_right_edge_gesture
             edge: "right"
+            edgeWidth: id_chat_assistant_page.rightGestureWidth
             gestureEnabled: !qmlGlobal.inputPageShowing
             anchors {
                 right: parent.right
@@ -1393,6 +1555,10 @@ YPage {
                     id_session_panel.close();
                     id_message_index_panel.open();
                 }
+            }
+            onTriggeredOutward: {
+                if (id_message_index_panel.isOpen)
+                    id_message_index_panel.close();
             }
         }
 
@@ -1696,7 +1862,6 @@ YPage {
             if ((ticks >= 10 && stableFrames >= 3) || ticks >= 30) {
                 stop();
                 anchorIndex = -1;
-                id_chat_assistant_page._richContentAnchorPending = false;
                 id_list_bounds_guard_timer.restart();
             }
         }
@@ -1707,10 +1872,9 @@ YPage {
         interval: 0
         repeat: false
         onTriggered: {
-            if (id_chat_listview.moving || id_rich_content_anchor_timer.running
-                    || id_chat_assistant_page._richContentAnchorPending)
+            if (id_chat_listview.moving || id_rich_content_anchor_timer.running)
                 return;
-            id_chat_listview.forceLayout();
+            // 只把 contentY 夹回边界，不做强排。
             var minY = id_chat_listview.originY;
             var maxY = Math.max(minY, minY + id_chat_listview.contentHeight - id_chat_listview.height);
             var currentY = isFinite(id_chat_listview.contentY) ? id_chat_listview.contentY : minY;
@@ -1720,6 +1884,7 @@ YPage {
                 id_chat_listview.contentY = boundedY;
                 id_chat_listview._programmaticScroll = false;
             }
+            id_chat_listview.returnToBounds();
         }
     }
 
@@ -1737,7 +1902,8 @@ YPage {
         }
 
         onTriggered: {
-            id_chat_listview.forceLayout();
+            if (ticks === 0)
+                id_chat_listview.forceLayout();
             var maxY = Math.max(id_chat_listview.originY,
                                 id_chat_listview.originY + id_chat_listview.contentHeight - id_chat_listview.height);
             id_chat_listview._programmaticScroll = true;
@@ -1751,15 +1917,15 @@ YPage {
 
     Timer {
         id: id_follow_latest_timer
-        interval: 20
+        interval: 40
         repeat: true
         onTriggered: {
-            if (id_chat_listview.moving || id_chat_listview._flicking || id_chat_listview.userScrolledUp) {
+            // 用户已手动滚动时停止自动跟随。
+            if (id_chat_listview.userScrolledUp || id_chat_listview.userInteracting) {
                 stop();
                 return;
             }
-            id_chat_listview.forceLayout();
-            id_chat_listview.scrollToBottom();
+            id_chat_listview.autoFollowBottom();
             _followAttempts++;
 
             var sameHeight = Math.abs(id_chat_listview.contentHeight - _followLastContentHeight) <= 1;
@@ -1768,7 +1934,7 @@ YPage {
             var atBottom = Math.abs(targetY - id_chat_listview.contentY) <= 1;
             _followStableFrames = sameHeight && atBottom ? _followStableFrames + 1 : 0;
             _followLastContentHeight = id_chat_listview.contentHeight;
-            if ((_followAttempts >= 8 && _followStableFrames >= 3) || _followAttempts >= 25)
+            if ((_followAttempts >= 6 && _followStableFrames >= 3) || _followAttempts >= 12)
                 stop();
         }
     }
@@ -1899,18 +2065,27 @@ YPage {
         property string content: ""
         property int lastIndex: -1
         property string targetKind: ""
+        property string reasoning: ""
+        property int reasoningIndex: -1
         property bool scrollScheduled: false
         property bool endProcessed: false
     }
 
     Timer {
         id: throttlingTimer
-        interval: 50
+        interval: 60
         repeat: false
         onTriggered: {
             if (_flushStreamBuffer() >= 0)
                 _scheduleScrollToBottom();
         }
+    }
+
+    Timer {
+        id: reasoningFlushTimer
+        interval: 60
+        repeat: false
+        onTriggered: _flushReasoningBuffer()
     }
 
     Connections {
@@ -1928,7 +2103,11 @@ YPage {
         function onMessageReceived(content, isComplete) {
             _toolCallActive = false;
             _completeLastReasoningCard();
-            if (isComplete && !streamThrottle.endProcessed) {
+            // 非流式回复的终态事件。
+            if (!isComplete)
+                return;
+            // 同一次回复只写一次。
+            if (!streamThrottle.endProcessed) {
                 var lastIndex = chatModel.count - 1;
                 if (lastIndex < 0 || chatModel.get(lastIndex).isUser
                         || chatModel.get(lastIndex).isToolCall || chatModel.get(lastIndex).isReasoning)
@@ -1940,37 +2119,70 @@ YPage {
                     "isThinking": false,
                     "isReasoning": false
                 });
-                generationDoneTimer.restart();
+                streamThrottle.endProcessed = true;
             }
+            _rebuildCurrentTurnRows();
+            // 保证生成态总能收尾。
+            generationDoneTimer.restart();
         }
         function onReasoningChunk(content) {
             if (!content)
                 return;
 
-            // Flush answer text before changing rows. Otherwise the saved index
-            // can point at the newly inserted reasoning card.
+            // 追加到已有思维链行，等定时器合并写入。
+            if (streamThrottle.reasoningIndex >= 0
+                    && streamThrottle.reasoningIndex === _activeReasoningIndex) {
+                streamThrottle.reasoning += content;
+                if (!reasoningFlushTimer.running)
+                    reasoningFlushTimer.start();
+                return;
+            }
+
+            // Flush buffered answer text before changing rows.
+            _flushReasoningBuffer();
             if (streamThrottle.content !== "")
                 _flushStreamBuffer();
 
             var lastIndex = chatModel.count - 1;
             if (lastIndex >= 0 && chatModel.get(lastIndex).isReasoning) {
-                chatModel.setProperty(lastIndex, "raw_text", chatModel.get(lastIndex).raw_text + content);
+                _activeReasoningIndex = lastIndex;
+                streamThrottle.reasoningIndex = lastIndex;
+                streamThrottle.reasoning += content;
+                if (!reasoningFlushTimer.running)
+                    reasoningFlushTimer.start();
                 return;
             }
             if (lastIndex >= 0 && chatModel.get(lastIndex).isThinking)
                 chatModel.remove(lastIndex);
 
-            // Keep late reasoning before an already-created answer row.
+            // Keep late reasoning before the answer row.
             var answerIndex = _findCurrentAnswerIndex();
-            if (answerIndex >= 0)
-                chatModel.insert(answerIndex, _makeReasoningEntry(content));
-            else
-                chatModel.append(_makeReasoningEntry(content));
+            var reasoningIndex = -1;
+            if (answerIndex >= 0) {
+                chatModel.insert(answerIndex, _makeReasoningEntry(""));
+                reasoningIndex = answerIndex;
+            } else {
+                chatModel.append(_makeReasoningEntry(""));
+                reasoningIndex = chatModel.count - 1;
+            }
+            _activeReasoningIndex = reasoningIndex;
+            streamThrottle.reasoningIndex = reasoningIndex;
+            streamThrottle.reasoning += content;
+            if (!reasoningFlushTimer.running)
+                reasoningFlushTimer.start();
             _scheduleScrollToBottom();
         }
         function onStreamChunk(content) {
             streamThrottle.endProcessed = false;
             _completeLastReasoningCard();
+            // 同一条回答行持续接收时的快路径。
+            if (streamThrottle.lastIndex >= 0 && streamThrottle.targetKind === "answer"
+                    && streamThrottle.lastIndex === chatModel.count - 1) {
+                streamThrottle.content += content;
+                if (!throttlingTimer.running)
+                    throttlingTimer.start();
+                return;
+            }
             var lastIndex = chatModel.count - 1;
             if (lastIndex < 0)
                 return;
@@ -1981,8 +2193,7 @@ YPage {
                 lastIndex = _appendAnswerPlaceholder();
                 item = chatModel.get(lastIndex);
             }
-            // Keep the thinking bubble until the buffered first chunk is committed.
-            // _flushStreamBuffer() switches the state and text in one model update.
+            // Keep the thinking bubble until the chunk is flushed.
             if (streamThrottle.lastIndex >= 0 && streamThrottle.lastIndex !== lastIndex)
                 _flushStreamBuffer();
             streamThrottle.content += content;
@@ -2010,15 +2221,16 @@ YPage {
         }
         function onStreamEnd() {
             throttlingTimer.stop();
+            reasoningFlushTimer.stop();
             _completeLastReasoningCard();
             _flushStreamBuffer();
             var lastIndex = chatModel.count - 1;
             if (lastIndex >= 0) {
                 var item = chatModel.get(lastIndex);
-                if (!item.isUser && !item.isToolCall && !item.isReasoning) {
-                    if (item.isThinking && item.raw_text === "") {
-                        return;
-                    }
+                if (item.isThinking && item.raw_text === "") {
+                    // 一个字段都没产出，收掉空占位。
+                    chatModel.remove(lastIndex);
+                } else if (!item.isUser && !item.isToolCall && !item.isReasoning) {
                     var rawContent = item.raw_text;
                     chatModel.set(lastIndex, {
                         "text": "",
@@ -2032,6 +2244,8 @@ YPage {
             if (!_toolCallActive)
                 generationDoneTimer.restart();
             streamThrottle.endProcessed = true;
+            // 最后按落库历史校正这一轮。
+            _rebuildCurrentTurnRows();
         }
         function onErrorOccurred(error) {
             _completeLastReasoningCard();
@@ -2066,7 +2280,9 @@ YPage {
             id_chat_assistant_page.isGenerating = true;
             finalizeLastAssistantIfNeeded();
             _upsertToolEntry(toolCallId, "正在搜索：" + query, "", "searching", false);
-            _scheduleScrollToBottom();
+            Qt.callLater(function () {
+                id_chat_listview.scrollToBottom();
+            });
         }
         function onTavilySearchFinished(toolCallId, success, summary, resultText) {
             updateCardByToolCallId(toolCallId, {
@@ -2082,7 +2298,9 @@ YPage {
             id_chat_assistant_page.isGenerating = true;
             finalizeLastAssistantIfNeeded();
             _upsertToolEntry(toolCallId, "请求执行：" + command, command, "pending", false);
-            _scheduleScrollToBottom();
+            Qt.callLater(function () {
+                id_chat_listview.scrollToBottom();
+            });
             shellConfirmDialog.show(toolCallId, command);
         }
         function onShellCommandStarted(toolCallId, command) {
@@ -2114,7 +2332,9 @@ YPage {
                 "toolState": "",
                 "historyIndex": -1
             });
-            _scheduleScrollToBottom();
+            Qt.callLater(function () {
+                id_chat_listview.scrollToBottom();
+            });
         }
         function onRequestCancelled() {
             _completeLastReasoningCard();

@@ -7,10 +7,13 @@ Item {
 
     readonly property int margins: 10
     property int value: 0
-    readonly property real valueScale: id_touch_regulator_root.implicitWidth * 0.01
+    readonly property real valueScale: id_touch_regulator_root.width * 0.01
     readonly property alias pressed: id_mouse_area.pressed
 
-    onValueChanged: {
+    onValueChanged: updateProgress()
+    onWidthChanged: updateProgress()
+
+    function updateProgress() {
         if (value <= 0) {
             //positionPrograssZero()
             id_progress_rect.anchors.rightMargin
@@ -20,7 +23,7 @@ Item {
             id_progress_rect.anchors.rightMargin = 0
         } else {
             id_progress_rect.anchors.rightMargin
-                    = id_touch_regulator_root.width - parseInt(value * valueScale)
+                    = id_touch_regulator_root.width - parseInt(value * id_touch_regulator_root.width * 0.01)
         }
     }
 

@@ -10,6 +10,9 @@ YMouseArea {
     objectName: "YInputTextItem.qml_YMouseArea"
 
     property string text: ""
+    // 特殊按键（如空格）用图标代替文本
+    property bool iconMode: false
+    property string iconName: ""
     property bool _isPressAndHoldTriggered: false
     // 标记 onPressed 是否已触发（Flickable 的 pressDelay 可能导致快速点击时 onPressed 被跳过）
     property bool _pressedTriggered: false
@@ -98,9 +101,18 @@ YMouseArea {
 
     YTextMedium {
         id: id_text_item
-        font.pixelSize: 20
+        // 紧凑布局下按键更窄，需要缩小字号避免溢出
+        font.pixelSize: id_input_text_item.width < 40 ? 15 : 20
         anchors.centerIn: parent
         text: id_input_text_item.text
+        visible: !id_input_text_item.iconMode
+    }
+
+    YImage {
+        anchors.centerIn: parent
+        sourceSize: Qt.size(40, 40)
+        imageName: id_input_text_item.iconName
+        visible: id_input_text_item.iconMode
     }
 
 }

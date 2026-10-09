@@ -1,10 +1,7 @@
 import QtQuick 2.12
 import com.github.penuniverse 1.0
 
-/*
- * ChatSessionListPanel - 会话历史列表面板
- * 从左侧滑入显示，列出所有聊天会话，支持切换、创建、删除、重命名
- */
+// 会话历史列表面板，从左侧滑入。
 Rectangle {
     id: id_root
     width: 0
@@ -34,7 +31,7 @@ Rectangle {
     // 动画控制
     Behavior on width {
         NumberAnimation {
-            duration: 250
+            duration: 130
             easing.type: Easing.OutCubic
         }
     }

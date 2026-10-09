@@ -24,6 +24,7 @@ Item {
     property bool textureCacheEnabled: true
     property string renderMode: "full"
     property bool listMoving: false
+    property bool listScrolledUp: false
     property bool navigationJumping: false
     property int messageIndex: -1
     property real listWidth: 320
@@ -75,19 +76,29 @@ Item {
         id: reasoningComponent
         Item {
             id: reasoningItem
-            property bool expanded: false
+            // 展开状态：用户手动选择优先，否则未完成时展开。
+            property bool userToggled: false
+            property bool userExpanded: false
+            readonly property bool expanded: userToggled ? userExpanded : !root.isComplete
             property int boundMessageIndex: root.messageIndex
             readonly property bool bodyVisible: expanded
+            // 展开后的最大高度。
+            readonly property real maxBodyHeight: 104
             implicitWidth: root.width
 
-            Component.onCompleted: expanded = !root.isComplete
-            onBoundMessageIndexChanged: expanded = !root.isComplete
+            onBoundMessageIndexChanged: {
+                // 复用到另一条消息时重置展开选择。
+                userToggled = false;
+                userExpanded = false;
+            }
             implicitHeight: reasoningPanel.height + 8
 
             Rectangle {
                 id: reasoningPanel
                 width: Math.min(root.listWidth - 16, 400)
-                height: 34 + (reasoningItem.bodyVisible ? 66 : 0)
+                height: 34 + (reasoningItem.bodyVisible
+                              ? Math.min(reasoningItem.maxBodyHeight, reasoningText.implicitHeight + 16)
+                              : 0)
                 x: 8
                 radius: 6
                 color: "#17222D"
@@ -146,7 +157,7 @@ Item {
 
                     Canvas {
                         id: reasoningChevron
-                        visible: root.isComplete
+                        visible: root.isComplete || root.rawText.length > 0
                         anchors.right: parent.right
                         anchors.rightMargin: 10
                         anchors.verticalCenter: parent.verticalCenter
@@ -173,11 +184,14 @@ Item {
 
                     MouseArea {
                         anchors.fill: parent
-                        enabled: root.isComplete
-                        preventStealing: false
+                        // 有内容时也允许展开。
+                        enabled: root.isComplete || root.rawText.length > 0
+                        // 防止点击被 ListView 抢走。
+                        preventStealing: true
                         onClicked: {
                             root.toolCardExpansionStarted(!reasoningItem.expanded);
-                            reasoningItem.expanded = !reasoningItem.expanded;
+                            reasoningItem.userExpanded = !reasoningItem.expanded;
+                            reasoningItem.userToggled = true;
                         }
                     }
                 }
@@ -195,7 +209,7 @@ Item {
                         clip: true
                         contentWidth: width
                         contentHeight: reasoningText.implicitHeight
-                        interactive: root.isComplete && contentHeight > height
+                        interactive: (root.isComplete || root.rawText.length > 0) && contentHeight > height
                         boundsBehavior: Flickable.StopAtBounds
 
                         function followLatest() {
@@ -206,7 +220,8 @@ Item {
                         Text {
                             id: reasoningText
                             width: reasoningViewport.width
-                            text: root.rawText
+                            // 流式期间只排版尾部 1200 字。
+                            text: root.isComplete ? root.rawText : root.rawText.slice(-1200)
                             color: "#9EB1C0"
                             font.pixelSize: 11
                             font.family: root.fontFamily || ""
@@ -334,6 +349,7 @@ Item {
                     rawText: (root.reasoningText !== ""
                               ? "**推理过程**\n\n" + root.reasoningText + "\n\n**回答**\n\n" : "") + root.rawText
                     isComplete: root.isComplete
+                    streamTailOnly: !root.listScrolledUp
                     serverAvailable: root.mathServerAvailable
                     layoutBusy: root.listMoving || root.navigationJumping || !root.richContentNearViewport
                     parseDelay: 16 + Math.abs(root.messageIndex % 4) * 20

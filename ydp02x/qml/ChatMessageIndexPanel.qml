@@ -1,9 +1,6 @@
 import QtQuick 2.12
 
-/*
- * ChatMessageIndexPanel - 当前会话消息索引面板
- * 从右侧滑入显示，列出当前会话的所有消息摘要，点击可导航到对应消息位置
- */
+// 当前会话的消息索引面板，从右侧滑入。
 Rectangle {
     id: id_root
     width: 0
@@ -18,7 +15,7 @@ Rectangle {
     property var fontFamily
     // 是否正在显示
     property bool isOpen: false
-    // 实际聊天 ListModel；索引必须与消息 ListView 的 delegate 索引一致。
+    // 实际聊天 ListModel。
     property var messageModel: null
     // 消息摘要列表模型: [{index, role, preview}]
     property var messagePreviews: []
@@ -30,7 +27,7 @@ Rectangle {
     // 动画控制
     Behavior on width {
         NumberAnimation {
-            duration: 250
+            duration: 130
             easing.type: Easing.OutCubic
         }
     }
@@ -54,8 +51,7 @@ Rectangle {
     }
 
     function refreshPreviews() {
-        // Build from the exact ListModel used by the chat ListView. Backend history
-        // indices diverge when reasoning and grouped tool cards create extra delegates.
+        // Build previews from the chat ListView's own model.
         var newPreviews = [];
         if (!messageModel || messageModel.count === undefined) {
             messagePreviews = newPreviews;

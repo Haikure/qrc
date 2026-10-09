@@ -8,9 +8,6 @@ import com.youdao.pen 1.0
 YBackground {
     id: id_container_index
 
-    // 按键小助手开启时，语音助手图标恢复为原版语言助手，避免首页出现 Mod 入口
-    readonly property int speechEntryPageIndex: antiEmbs.active ? YEnum.PageIndex.Speech : PageIndex.AudioRecorder
-
     function delayInitMainTitleBar() {
         id_main_titlebar_loader.source = "components/YMainTitleBar.qml";
         id_main_titlebar_loader.active = true;
@@ -245,7 +242,7 @@ YBackground {
             }
             append({
                 "iconFg": "home-speech",
-                "pageIndex": speechEntryPageIndex,
+                "pageIndex": antiEmbs.active ? YEnum.PageIndex.Speech : PageIndex.AudioRecorder,
                 "logAction": ""
             });
             append({
@@ -315,7 +312,7 @@ YBackground {
             mainMenuModel.append({"iconFg": "home-dict", "pageIndex": YEnum.PageIndex.Dict, "logAction": "action=home_search_click"});
             if (!antiEmbs.active)
                 mainMenuModel.append({"iconFg": "home-textbook", "pageIndex": PageIndex.ChatAssistant, "logAction": ""});
-            mainMenuModel.append({"iconFg": "home-speech", "pageIndex": speechEntryPageIndex, "logAction": ""});
+            mainMenuModel.append({"iconFg": "home-speech", "pageIndex": antiEmbs.active ? YEnum.PageIndex.Speech : PageIndex.AudioRecorder, "logAction": ""});
             mainMenuModel.append({"iconFg": "home-fav", "pageIndex": YEnum.PageIndex.Fav, "logAction": "action=home_wordbook_click"});
             if (qmlGlobal.checkFeature(YEnum.FEATURE_AUDIO))
                 mainMenuModel.append({"iconFg": "home-audioplayer", "pageIndex": YEnum.PageIndex.Audioplayer, "logAction": "action=home_listening_clik"});

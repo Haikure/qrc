@@ -1,5 +1,6 @@
 import QtQuick 2.12
 import com.youdao.pen 1.0
+import com.github.penuniverse 1.0
 
 import "../commons"
 
@@ -10,17 +11,56 @@ Item {
     signal adjustSettingsRequested()
     signal playerRequested()
 
-    readonly property bool isPlaying: mediaPlayerManager.playState === YEnum.PLAYING
-    readonly property string currentTitle: mediaPlayerManager.title || ""
+    property bool showProgress: true
+
+    // 插件媒体会话优先，否则用宿主播放器
+    readonly property bool pluginSession: typeof mediaSession !== "undefined" && mediaSession.active
+
+    readonly property bool isPlaying: pluginSession
+                                      ? mediaSession.playState === MediaSession.Playing
+                                      : mediaPlayerManager.playState === YEnum.PLAYING
+    readonly property string currentTitle: pluginSession ? (mediaSession.title || "")
+                                                         : (mediaPlayerManager.title || "")
     readonly property var currentSentenceData: id_lrc_view.currentItem ? id_lrc_view.currentItem["lyricData"] : null
-    readonly property string currentMainLyric: !mediaPlayerManager.hasLrc
-                                             ? ""
-                                             : (currentSentenceData && currentSentenceData.mainLrc
-                                                ? currentSentenceData.mainLrc
-                                                : (mediaPlayerManager.mainLrc || ""))
-    readonly property string currentTranslationLyric: currentSentenceData && currentSentenceData.transLrc
-                                                     ? currentSentenceData.transLrc
-                                                     : ""
+    readonly property string currentMainLyric: pluginSession
+                                               ? (mediaSession.hasLyrics ? (mediaSession.mainLyric || "") : "")
+                                               : (!mediaPlayerManager.hasLrc
+                                                  ? ""
+                                                  : (currentSentenceData && currentSentenceData.mainLrc
+                                                     ? currentSentenceData.mainLrc
+                                                     : (mediaPlayerManager.mainLrc || "")))
+    readonly property string currentTranslationLyric: pluginSession
+                                                      ? (mediaSession.hasLyrics ? (mediaSession.transLyric || "") : "")
+                                                      : (currentSentenceData && currentSentenceData.transLrc
+                                                         ? currentSentenceData.transLrc
+                                                         : "")
+    // 0 ~ 100
+    readonly property real currentProgress: {
+        if (pluginSession) {
+            if (mediaSession.duration <= 0) return 0
+            return Math.max(0, Math.min(100, mediaSession.position * 100 / mediaSession.duration))
+        }
+        return Math.max(0, Math.min(100, mediaPlayerManager.progress))
+    }
+
+    // 极简进度条：贴在面板顶部，蓝色
+    Rectangle {
+        id: id_progress_track
+        visible: id_quick_music_player.showProgress
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        height: 2
+        color: "#2EFFFFFF"
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            width: parent.width * id_quick_music_player.currentProgress / 100.0
+            color: YColors.blueText
+        }
+    }
 
     ListView {
         id: id_lrc_view
@@ -29,8 +69,8 @@ Item {
         visible: true
         opacity: 0
         interactive: false
-        currentIndex: mediaPlayerManager.currentSentenceId >= 0 ? mediaPlayerManager.currentSentenceId : 0
-        model: mediaPlayerManager
+        currentIndex: !pluginSession && mediaPlayerManager.currentSentenceId >= 0 ? mediaPlayerManager.currentSentenceId : 0
+        model: pluginSession ? null : mediaPlayerManager
         delegate: Item {
             property var lyricData: model.modelData
         }
@@ -222,7 +262,10 @@ Item {
             mouseAreaMargins: -3
             sourceSize: Qt.size(24, 24)
             imageName: "audioplayer/previous54"
-            onValidClicked: mediaPlayerManager.onClickedPrev()
+            onValidClicked: {
+                if (pluginSession) mediaSession.prevRequested()
+                else mediaPlayerManager.onClickedPrev()
+            }
             objectName: "YQuickMusicPlayer.qml_id_previous_button"
         }
 
@@ -236,9 +279,11 @@ Item {
             imageName: !isPlaying ? "audioplayer/pause" : "audioplayer/play"
             onValidClicked: {
                 if (isPlaying) {
-                    mediaPlayerManager.onClickedPause()
+                    if (pluginSession) mediaSession.pauseRequested()
+                    else mediaPlayerManager.onClickedPause()
                 } else {
-                    mediaPlayerManager.onClickedPlay()
+                    if (pluginSession) mediaSession.playRequested()
+                    else mediaPlayerManager.onClickedPlay()
                 }
             }
             objectName: "YQuickMusicPlayer.qml_id_play_button"
@@ -251,7 +296,10 @@ Item {
             mouseAreaMargins: -3
             sourceSize: Qt.size(24, 24)
             imageName: "audioplayer/next54"
-            onValidClicked: mediaPlayerManager.onClickedNext()
+            onValidClicked: {
+                if (pluginSession) mediaSession.nextRequested()
+                else mediaPlayerManager.onClickedNext()
+            }
             objectName: "YQuickMusicPlayer.qml_id_next_button"
         }
 
@@ -262,7 +310,10 @@ Item {
             mouseAreaMargins: -3
             sourceSize: Qt.size(22, 22)
             imageName: "commons/close"
-            onValidClicked: musicPlayer.stop()
+            onValidClicked: {
+                if (pluginSession) mediaSession.stopRequested()
+                else musicPlayer.stop()
+            }
             objectName: "YQuickMusicPlayer.qml_id_stop_button"
         }
     }

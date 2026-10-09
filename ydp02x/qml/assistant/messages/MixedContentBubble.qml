@@ -10,6 +10,8 @@ Item {
     property real maxWidth: 300
     property var fontFamily
     property bool layoutBusy: false
+    // 流式期间只渲染尾部文本。
+    property bool streamTailOnly: false
     property int parseDelay: 16
     readonly property bool renderReady: _renderReady && !crossFadeAnimation.running
 
@@ -73,7 +75,7 @@ Item {
             }
             return;
         }
-        // A completed block tree must be committed before considering a deferred parse.
+        // Commit a completed block tree before a deferred parse.
         if (_commitPending || (_blocks.length > 0 && _loadedBlocks >= _blocks.length)) {
             _parsePending = false;
             _commitRender();
@@ -96,8 +98,7 @@ Item {
         if (!isComplete)
             return;
 
-        // QML applies model roles independently when a delegate is created. Avoid
-        // restarting the same parse for rawText, isComplete, and completion events.
+        // Avoid restarting the same parse for the same rawText.
         if (_hasRenderSource && _renderSource === rawText
                 && (_renderReady || parseTimer.running || _parsePending || _parseRequestId !== ""
                     || _blocks.length > 0 || _useFastPath || commitSettleTimer.running
@@ -311,7 +312,7 @@ Item {
         id: streamingText
         opacity: root.isComplete ? 0 : 1
         width: root.maxWidth
-        text: root.rawText
+        text: root.streamTailOnly && root.rawText.length > 1500 ? root.rawText.slice(-1500) : root.rawText
         textFormat: Text.PlainText
         wrapMode: Text.WrapAnywhere
         color: "#FFFFFF"
@@ -320,7 +321,7 @@ Item {
         lineHeight: 1.3
     }
 
-    // 完成态先显示廉价纯文本，富文本准备好后原子替换。
+    // 完成态的纯文本占位。
     Item {
         id: skeletonPlaceholder
         visible: root.isComplete && root._showSkeleton

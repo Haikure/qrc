@@ -12,13 +12,30 @@ Item {
     state: "close"
 
     readonly property bool isOpening: ("open" === state)
-    readonly property bool musicControlsAvailable: musicPlayer.hideFloatingWindow
+    // 按键小助手激活时恢复快速设置改版前的外观。
+    readonly property bool useOriginalStyle: antiEmbs.active
+    readonly property bool pluginMusicAvailable: typeof mediaSession !== "undefined" && mediaSession.active
+    readonly property bool hostMusicAvailable: musicPlayer.hideFloatingWindow
                                         && mediaPlayerManager.playerMode === YEnum.PM_AudioPlayer
                                         && mediaPlayerManager.title.length > 0
                                         && mediaPlayerManager.playState !== YEnum.STOPPED
+    readonly property bool musicControlsAvailable: pluginMusicAvailable || hostMusicAvailable
 
     property bool showingMusicControls: false
     property alias fastBlurTarget: id_fast_blur.source
+
+    // 音乐不可用时强制回到控制菜单; 用户的视图偏好仍保留, 音乐再次可用时恢复
+    onMusicControlsAvailableChanged: {
+        if (!musicControlsAvailable) {
+            showingMusicControls = false
+        }
+    }
+
+    // 记录用户主动选择的视图, 供下次打开面板时沿用
+    function setMusicControlsShown(show) {
+        showingMusicControls = show
+        musicPlayer.quickPanelMusicView = show
+    }
 
     function close() {
         if ("open" === state) {
@@ -34,7 +51,7 @@ Item {
 
     function reopen() {
         state = "openning"
-        showingMusicControls = musicControlsAvailable
+        showingMusicControls = musicControlsAvailable && musicPlayer.quickPanelMusicView
         id_open_close_animator.to = 0
         id_open_close_animator.restart()
         settingManager.updateVolumeAndLcd()
@@ -118,12 +135,17 @@ Item {
     }
 
     YQuickMusicPlayer {
+        showProgress: !id_quick_setting_layer_root.useOriginalStyle
         visible: id_quick_setting_layer_root.showingMusicControls
                  && id_quick_setting_layer_root.musicControlsAvailable
-        onAdjustSettingsRequested: id_quick_setting_layer_root.showingMusicControls = false
+        onAdjustSettingsRequested: id_quick_setting_layer_root.setMusicControlsShown(false)
         onPlayerRequested: {
             id_quick_setting_layer_root.forceClose()
-            qmlGlobal.showAudioPlayer()
+            if (typeof mediaSession !== "undefined" && mediaSession.active) {
+                mediaSession.openRequested()
+            } else {
+                qmlGlobal.showAudioPlayer()
+            }
         }
     }
 
@@ -135,9 +157,9 @@ Item {
 
         YIconButton {
             anchors.right: parent.right
-            anchors.rightMargin: 12
+            anchors.rightMargin: id_quick_setting_layer_root.useOriginalStyle ? 4 : 12
             anchors.bottom: parent.bottom
-            anchors.bottomMargin: 8
+            anchors.bottomMargin: id_quick_setting_layer_root.useOriginalStyle ? 0 : 8
             implicitWidth: 24
             implicitHeight: 24
             radius: 6
@@ -145,7 +167,7 @@ Item {
             sourceSize: Qt.size(16, 16)
             imageName: "audioplayer/authorized_play"
             visible: id_quick_setting_layer_root.musicControlsAvailable
-            onValidClicked: id_quick_setting_layer_root.showingMusicControls = true
+            onValidClicked: id_quick_setting_layer_root.setMusicControlsShown(true)
             objectName: "YQuickSettingLayer.qml_id_show_music_button"
         }
 
@@ -154,7 +176,8 @@ Item {
             anchors.top: parent.top
             anchors.left: parent.left
             anchors.right: parent.right
-            height: 26
+            height: id_quick_setting_layer_root.useOriginalStyle ? 0 : 26
+            visible: !id_quick_setting_layer_root.useOriginalStyle
 
             YText {
                 id: id_time
@@ -188,46 +211,58 @@ Item {
                 text: ("%1%").arg(batteryManager.power)
             }
 
-            Rectangle {
+            Item {
                 id: id_battery_icon
-                anchors.right: batteryManager.charging ? id_charging_icon.left : parent.right
-                anchors.rightMargin: batteryManager.charging ? 4 : 16
+                anchors.right: parent.right
+                anchors.rightMargin: 16
                 anchors.verticalCenter: parent.verticalCenter
-                width: 24
-                height: 11
-                radius: 4
-                color: "transparent"
-                border.width: 1
-                border.color: YColors.white
+                width: 27
+                height: 14
+
+                readonly property real level: Math.max(0, Math.min(100, batteryManager.power)) / 100
+                readonly property color fillColor: batteryManager.charging ? "#65D6A4"
+                                                   : (level < 0.2 ? YColors.red : "#EEF1F6")
 
                 Rectangle {
+                    id: id_battery_body
                     anchors.left: parent.left
-                    anchors.leftMargin: 2
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: (parent.width - 4) * Math.max(0, Math.min(100, batteryManager.power)) / 100
-                    height: 6
-                    radius: 2
-                    color: batteryManager.charging
-                          ? (batteryManager.power < 100 ? "#00FF66" : YColors.white)
-                          : (batteryManager.power < 20 ? YColors.red : YColors.white)
+                    width: 24
+                    height: parent.height
+                    radius: 3
+                    color: "#14FFFFFF"
+                    border.width: 1
+                    border.color: "#A6FFFFFF"
+                    antialiasing: true
+
+                    Rectangle {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 3
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: id_battery_icon.level > 0
+                               ? Math.max(1, Math.round((parent.width - 6) * id_battery_icon.level)) : 0
+                        height: parent.height - 6
+                        radius: 1
+                        color: id_battery_icon.fillColor
+                    }
                 }
 
                 Rectangle {
-                    anchors.left: parent.right
+                    anchors.left: id_battery_body.right
+                    anchors.leftMargin: 1
                     anchors.verticalCenter: parent.verticalCenter
                     width: 2
-                    height: 5
+                    height: 6
                     radius: 1
-                    color: YColors.white
+                    color: id_battery_body.border.color
                 }
             }
 
             YImage {
                 id: id_charging_icon
-                anchors.right: parent.right
-                anchors.rightMargin: 2
+                anchors.right: id_battery_value.left
+                anchors.rightMargin: 4
                 anchors.verticalCenter: parent.verticalCenter
-                sourceSize: Qt.size(14, 14)
+                sourceSize: Qt.size(12, 12)
                 imageName: "ic_battery_flash"
                 visible: batteryManager.charging
             }
@@ -235,34 +270,34 @@ Item {
 
         Grid {
             anchors.top: id_status_bar.bottom
-            anchors.topMargin: 4
-            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.topMargin: id_quick_setting_layer_root.useOriginalStyle ? 0 : 4
+            x: id_quick_setting_layer_root.useOriginalStyle ? 0 : (parent.width - width) / 2
             columns: 2
             rows: 2
-            rowSpacing: 10
-            columnSpacing: 16
-            padding: 0
+            rowSpacing: id_quick_setting_layer_root.useOriginalStyle ? 12 : 10
+            columnSpacing: id_quick_setting_layer_root.useOriginalStyle ? 24 : 16
+            padding: id_quick_setting_layer_root.useOriginalStyle ? 20 : 0
 
             YVolmueAdjustor {
                 id: id_volum_setting
-                implicitWidth: 150
-                implicitHeight: 46
-                width: 150
-                height: 46
+                implicitWidth: id_quick_setting_layer_root.useOriginalStyle ? 178 : 150
+                implicitHeight: id_quick_setting_layer_root.useOriginalStyle ? 56 : 46
+                width: implicitWidth
+                height: implicitHeight
             }
 
             YSlideWifiSetting {
                 id: id_slide_wifi
-                width: 72
-                height: 46
+                width: id_quick_setting_layer_root.useOriginalStyle ? implicitWidth : 72
+                height: id_quick_setting_layer_root.useOriginalStyle ? implicitHeight : 46
             }
 
             YTouchRegulator {
                 id: id_lum_setting
-                implicitWidth: 150
-                implicitHeight: 46
-                width: 150
-                height: 46
+                implicitWidth: id_quick_setting_layer_root.useOriginalStyle ? 178 : 150
+                implicitHeight: id_quick_setting_layer_root.useOriginalStyle ? 56 : 46
+                width: implicitWidth
+                height: implicitHeight
                 property int lcdSettingBrightness: settingManager.lcdBrightness
                 YImage {
                     sourceSize: Qt.size(30, 30)
@@ -299,8 +334,8 @@ Item {
 
             YSlideBluetoothSetting {
                 id: id_slide_bluetooth
-                width: 72
-                height: 46
+                width: id_quick_setting_layer_root.useOriginalStyle ? implicitWidth : 72
+                height: id_quick_setting_layer_root.useOriginalStyle ? implicitHeight : 46
             }
         }
     }
@@ -313,4 +348,3 @@ Item {
         imageName: "slide/ic_collapse"
     }
 }
-

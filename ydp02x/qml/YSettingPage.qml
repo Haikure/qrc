@@ -58,7 +58,7 @@ YPage {
     }
 
     function settingItemClicked(index, popThisPage = false) {
-        if (antiEmbs.active && (index === 201 || index === 203 || index === 206 || index === 208))
+        if (antiEmbs.active && (index === 201 || index === 203 || index === 206 || index === 208 || index === 209))
             return;
         console.log("YSettingPage.qml===settingItemClicked===index: ", index);
         currentShowIndex = index;
@@ -132,6 +132,9 @@ YPage {
         case 208:
             if (!antiEmbs.active)
                 showSettingPage("settingpages/WallpaperSettingPage", false, undefined, popThisPage);
+            break;
+        case 209:
+            showSettingPage("settingpages/KeyboardSettingPage", false, undefined, popThisPage);
             break;
         }
     }
@@ -234,6 +237,8 @@ YPage {
                                 return "笔头 LED";
                             case 208:
                                 return "壁纸";
+                            case 209:
+                                return "键盘设置";
                             default:
                                 return "";
                             }
@@ -352,6 +357,7 @@ YPage {
         if (!antiEmbs.active) {
             id_setting_model.append({"settingIndex": 208, "settingIcon": res.get("setting/background")});
             id_setting_model.append({"settingIndex": 203, "settingIcon": res.get("setting/sys_tweak")});
+            id_setting_model.append({"settingIndex": 209, "settingIcon": res.get("setting/advanced")});
         }
         id_setting_model.append({"settingIndex": YEnum.SettingIndex.Update, "settingIcon": res.getDisk("settings/ic_update")});
         id_setting_model.append({"settingIndex": YEnum.SettingIndex.About, "settingIcon": res.getDisk("settings/ic_about")});

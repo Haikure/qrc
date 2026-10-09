@@ -823,6 +823,8 @@ YBackButtonPage {
                                 //韩文词典
                                 || YEnum.DtChKo === dictType
                                 || YEnum.DtKoCh === dictType
+                                //PenMods 自造词典（src/dict/CustomDict）
+                                || (typeof customDict !== "undefined" && customDict.dictTypeId === dictType)
                         sourceComponent: {
                             getDictContentValue(dictType,content,index)
                             switch (dictType) {     
@@ -868,7 +870,10 @@ YBackButtonPage {
                             case YEnum.DtEnChKid:
                                 return id_dt_mango_kid_english_component
                             case YEnum.DtSimple:
+                                return id_dt_simple_component
                             default:
+                                if (typeof customDict !== "undefined" && customDict.dictTypeId === dictType)
+                                    return id_dt_penmods_component
                                 return id_dt_simple_component
                             }
                         }
@@ -876,6 +881,11 @@ YBackButtonPage {
                         Component {
                             id: id_dt_simple_component
                             YDictTypeDtSimple {}
+                        }
+
+                        Component {
+                            id: id_dt_penmods_component
+                            YDictTypeDtPenMods {}
                         }
 
                         Component{
