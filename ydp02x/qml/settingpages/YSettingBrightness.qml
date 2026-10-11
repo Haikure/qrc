@@ -92,7 +92,7 @@ YSettingItemPage {
 
             DescribedSwitchItem {
                 title: "场景熄屏跟随音频锁"
-                description: "音频锁激活时保持屏幕不熄灭。"
+                description: "音频锁激活时保持屏幕点亮，并阻止系统休眠，避免蓝牙音频中断。"
                 switchOn: screenManager.intelSleepAudioLock
                 interval: 0
                 onTimerTriggered: {
