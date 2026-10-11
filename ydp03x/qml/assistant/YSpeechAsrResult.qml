@@ -12,6 +12,8 @@ YLoader {
     anchors.fill: parent
     signal callback();
     property int showIndex: 0
+    property bool forwardToChat: false
+    property var forwardAsrResult: null
 
     YPopLayer {
         id: id_pop_layer_asr
@@ -146,6 +148,11 @@ YLoader {
 
             function onContentChanged() {
                 query_timeout.running = false
+                if (id_asr_result_loader.forwardToChat) {
+                    if (id_asr_result_loader.forwardAsrResult)
+                        id_asr_result_loader.forwardAsrResult();
+                    return;
+                }
                 //console.warn("YSpeechPage.qml===", speechManager.content);
                 let resJson = JSON.parse(speechManager.content);
                 speechManager.saveSpeechDebugInfo("content:" + speechManager.content)
@@ -392,6 +399,11 @@ YLoader {
             function onNewcontentChanged()
             {
                 query_timeout.running = false
+                if (id_asr_result_loader.forwardToChat) {
+                    if (id_asr_result_loader.forwardAsrResult)
+                        id_asr_result_loader.forwardAsrResult();
+                    return;
+                }
                 let cardJson = JSON.parse(speechManager.newcontent);
                 console.log("cvvvvvvvvvvvvvvvvv",speechManager.newcontent)
                 let cardname = cardJson.name

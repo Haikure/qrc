@@ -83,9 +83,9 @@ YBackButtonPage {
 
     Rectangle {
         anchors.horizontalCenter: parent.horizontalCenter
-        y: toastVisible ? 16 : -40
-        width: id_toast_text.implicitWidth + 32
-        height: 30
+        y: toastVisible ? 16 : -52
+        width: Math.min(parent.width - 40, id_toast_text.implicitWidth + 32)
+        height: 48
         radius: 6
         color: toastType === 2 ? "#4A1A1D" : toastType === 1 ? "#1A3A2A" : "#1A2A3A"
         z: 2000
@@ -98,17 +98,20 @@ YBackButtonPage {
         Text {
             id: id_toast_text
             anchors.centerIn: parent
+            width: parent.width - 32
+            horizontalAlignment: Text.AlignHCenter
+            elide: Text.ElideRight
             text: toastMsg
             color: toastType === 2 ? "#FF6B6B" : toastType === 1 ? "#4CAF50" : YColors.grayText
-            font.pixelSize: 12
+            font.pixelSize: 24
             font.family: fontManager.fontFamilyZhCn
         }
     }
 
     Flickable {
         anchors.fill: parent
-        anchors.leftMargin: 54
-        anchors.rightMargin: 10
+        anchors.leftMargin: 90
+        anchors.rightMargin: 16
         contentHeight: id_content_col.height + 20
         clip: true
 
@@ -118,7 +121,7 @@ YBackButtonPage {
             anchors.right: parent.right
             spacing: 8
 
-            YSettingItemTitle { title: "模型管理"; titlePixelSize: 22 }
+            YSettingItemTitle { title: "模型管理"; titlePixelSize: 26 }
 
             Repeater {
                 model: modelList.length

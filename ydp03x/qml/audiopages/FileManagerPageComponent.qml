@@ -11,9 +11,9 @@ import "../components"
 // 外观：YBackButtonPage(含竖排返回栏) + 左侧工具栏(重命名/删除) +
 //       文件列表(行=类型图标+文件名+大小+右侧箭头) + 删除确认 + 重命名键盘
 //
-// 能力范围（仅音频/视频，图片/文本暂不支持 → toast 提示）：
+// 能力范围：音频/视频、图片/文本查看。
 //   - 目录浏览 / 返回上级
-//   - 音频(mp3/flac/m4a/wav/ogg/aac) → soundCenter.playMusic → 系统音频播放器
+//   - 音频(mp3/flac/m4a/wav/ogg/aac) → MusicPlayer → 系统音频播放器
 //   - 视频(avi/mp4/mov/flv/mkv/webm) → 内嵌 FFmpeg，失败时回退 MPV
 //   - 删除（确认对话框）/ 重命名（YInputPage 键盘）
 // =====================================================================
@@ -59,10 +59,9 @@ YBackButtonPage {
 
     // 按扩展名分发（音频→系统播放器；视频→FFmpeg；文本/图片→内置查看器）
     function openByType(fileName, extName) {
-        let type = fileHandlers[extName];
+        let type = fileHandlers[extName.toLowerCase()];
         if (type === "play") {
-            soundCenter.playMusic(fileManager.getCurrentPathString() + "/" + fileName);
-            baseSignals.showToast("正在播放音频…", YColors.green);
+            fileManager.playFromView(fileName);
         } else if (type === "video") {
             id_video_loader.active = false;
             externalPlayer.open(fileName);

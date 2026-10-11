@@ -1,14 +1,13 @@
-import QtQuick 2.12
+import BaseQml 1.0
 import com.youdao.pen 1.0
+import QtQuick 2.12
+import com.github.penuniverse 1.0
 
-/*
- * ChatSessionListPanel - 会话历史列表面板
- * 从左侧滑入显示，列出所有聊天会话，支持切换、创建、删除、重命名
- */
+// 会话历史列表面板，从左侧滑入。
 Rectangle {
     id: id_root
     width: 0
-    height: parent ? parent.height : YBaseEnum.Screen.Height
+    height: parent ? parent.height : 170
     color: "#1A2432"
     clip: true
     z: 100
@@ -34,7 +33,7 @@ Rectangle {
     // 动画控制
     Behavior on width {
         NumberAnimation {
-            duration: 250
+            duration: 130
             easing.type: Easing.OutCubic
         }
     }
@@ -102,7 +101,7 @@ Rectangle {
                 text: "对话历史"
                 color: "#FFFFFF"
                 font.pixelSize: 12
-                font.family: fontManager.fontFamilyZhCn
+                font.family: fontManager.fontFamily
                 font.bold: true
                 anchors.verticalCenter: parent.verticalCenter
             }
@@ -124,7 +123,7 @@ Rectangle {
                     text: "+"
                     color: "#FFFFFF"
                     font.pixelSize: 15
-                    font.family: fontManager.fontFamilyZhCn
+                    font.family: fontManager.fontFamily
                     font.bold: true
                     anchors.centerIn: parent
                 }
@@ -189,7 +188,7 @@ Rectangle {
                         text: modelData.title || "未命名对话"
                         color: "#FFFFFF"
                         font.pixelSize: 11
-                        font.family: fontManager.fontFamilyZhCn
+                        font.family: fontManager.fontFamily
                         font.bold: modelData.id === id_root.activeSessionId
                         elide: Text.ElideRight
                         width: parent.width - 50
@@ -199,7 +198,7 @@ Rectangle {
                         text: (modelData.messageCount || 0) + " 条消息"
                         color: "#5A6B7D"
                         font.pixelSize: 9
-                        font.family: fontManager.fontFamilyZhCn
+                        font.family: fontManager.fontFamily
                     }
                 }
 
@@ -222,7 +221,7 @@ Rectangle {
                         text: "×"
                         color: "#FF453A"
                         font.pixelSize: 14
-                        font.family: fontManager.fontFamilyZhCn
+                        font.family: fontManager.fontFamily
                         font.bold: true
                         anchors.centerIn: parent
                     }

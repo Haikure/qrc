@@ -9,7 +9,7 @@ Item {
     property bool display: true          // true=块级，false=行内
     property bool serverAvailable: false
     property real maxWidth: 300
-    property var fontFamily
+    property var fontFamily: fontManager.fontFamily
 
     property int _state: MathCache.IDLE
     property string _svgData: ""
@@ -89,7 +89,7 @@ Item {
         text: root.display ? ("$$" + root.latex + "$$") : ("$" + root.latex + "$")
         color: "#A0B8D0"
         font.pixelSize: 13
-        font.family: root.fontFamily || ""
+        font.family: root.fontFamily || fontManager.fontFamily
         wrapMode: Text.Wrap
         // 块级公式宽度占满行、左对齐；行内公式使用自然宽度以避免在大 width 下溢出父容器
         width: root.display ? (root.maxWidth - 16) : implicitWidth

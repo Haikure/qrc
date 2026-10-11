@@ -93,6 +93,7 @@ Rectangle {
     }
 
     Text {
+        font.family: fontManager.fontFamily
         anchors.centerIn: parent
         width: parent.width * 0.8
         text: content.statusText
@@ -111,6 +112,7 @@ Rectangle {
         height: width
         Accessible.name: "返回文件管理"
         contentItem: Text {
+            font.family: fontManager.fontFamily
             text: "×"
             color: "white"
             font.pixelSize: 24 * content.uiScale

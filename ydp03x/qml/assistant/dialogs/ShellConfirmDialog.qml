@@ -8,7 +8,7 @@ Item {
 
     property string toolCallId: ""
     property string command: ""
-    property var fontFamily
+    property var fontFamily: fontManager.fontFamily
     property bool active: false
 
     property var queue: []
@@ -71,7 +71,7 @@ Item {
                 color: "#FF6B35"
                 font.pixelSize: 13
                 font.bold: true
-                font.family: root.fontFamily || ""
+                font.family: root.fontFamily || fontManager.fontFamily
             }
 
             Rectangle {
@@ -95,7 +95,7 @@ Item {
                         text: root.command
                         color: "#E0E0E0"
                         font.pixelSize: 11
-                        font.family: "monospace"
+                        font.family: root.fontFamily || fontManager.fontFamily
                         wrapMode: Text.Wrap
                         width: parent.parent.width - 12
                     }
@@ -115,7 +115,7 @@ Item {
                         text: "拒绝"
                         color: "#FF453A"
                         font.pixelSize: 13
-                        font.family: root.fontFamily || ""
+                        font.family: root.fontFamily || fontManager.fontFamily
                     }
                     MouseArea {
                         anchors.fill: parent
@@ -135,7 +135,7 @@ Item {
                         text: "执行"
                         color: "#4CAF50"
                         font.pixelSize: 13
-                        font.family: root.fontFamily || ""
+                        font.family: root.fontFamily || fontManager.fontFamily
                     }
                     MouseArea {
                         anchors.fill: parent

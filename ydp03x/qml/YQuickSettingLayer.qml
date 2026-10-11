@@ -46,6 +46,18 @@ Window {
         id: id_quick_setting_layer_root
         width: id_quick_setting_layer_container.width
         height: YBaseEnum.Screen.Height//id_quick_setting_layer_container.height
+        property bool showingMusicControls: false
+        readonly property bool pluginMusicAvailable: !antiEmbs.active && mediaSession.active
+        readonly property bool hostMusicAvailable: !antiEmbs.active && musicPlayer.hideFloatingWindow && mediaPlayerManager.title.length > 0
+        readonly property bool musicControlsAvailable: pluginMusicAvailable || hostMusicAvailable
+        onMusicControlsAvailableChanged: {
+            if (!musicControlsAvailable) showingMusicControls = false;
+        }
+        function showMusic(value) {
+            showingMusicControls = value && musicControlsAvailable;
+            musicPlayer.quickPanelMusicView = showingMusicControls;
+        }
+
         state: "close"
         visible: false
         clip: true
@@ -69,6 +81,7 @@ Window {
         }
 
         function reopen() {
+            showingMusicControls = musicControlsAvailable && musicPlayer.quickPanelMusicView;
             visible = true
             state = "openning"
             id_open_close_animator.to = 0
@@ -167,6 +180,34 @@ Window {
             color: "#E6000000"
         }
 
+        Item {
+            anchors.fill: parent
+            visible: !id_quick_setting_layer_root.showingMusicControls
+            property date currentTime: new Date()
+            Timer {
+                interval: 1000
+                repeat: true
+                running: id_quick_setting_layer_root.visible
+                onTriggered: parent.currentTime = new Date()
+            }
+            Text {
+                font.family: fontManager.fontFamily
+                x: 18
+                y: 2
+                font.pixelSize: 16
+                color: "#D7DCE5"
+                visible: !antiEmbs.active
+                text: Qt.formatDateTime(parent.currentTime, "MM/dd  hh:mm")
+            }
+            YPenModsBatteryIndicator {
+                objectName: "PenModsQuickSettingsBattery"
+                anchors.right: parent.right
+                anchors.rightMargin: 18
+                y: 0
+                power: batteryManager.power
+                charging: batteryManager.charging
+                visible: !antiEmbs.active
+            }
         YVolmueAdjustor {
             id: id_volum_setting
             anchors.top: parent.top
@@ -237,6 +278,33 @@ Window {
             mouseAreaMargins: -5
             onClicked: {
                 qmlGlobal.requestSettingPage()
+            }
+        }
+
+            Rectangle {
+                anchors.right: parent.right
+                anchors.rightMargin: 18
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 8
+                width: 88
+                height: 34
+                radius: 8
+                color: "#343840"
+                visible: id_quick_setting_layer_root.musicControlsAvailable
+                Text { font.family: fontManager.fontFamily; anchors.centerIn: parent; text: "音乐"; font.pixelSize: 20; color: "white" }
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: id_quick_setting_layer_root.showMusic(true)
+                }
+            }
+        }
+        YQuickMusicPlayer {
+            anchors.fill: parent
+            visible: id_quick_setting_layer_root.showingMusicControls
+            onAdjustSettingsRequested: id_quick_setting_layer_root.showMusic(false)
+            onPlayerRequested: {
+                id_quick_setting_layer_root.forceClose();
+                baseSignals.showAudioPlayer();
             }
         }
 

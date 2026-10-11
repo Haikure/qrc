@@ -52,8 +52,8 @@ YBackground {
         switch (index) {
         case YEnum.PageIndex.Dict:
             logManager.sendHttpLog("action=home_search_click")
-            // PenMods3: 查词翻译改为弹出键盘直接输入查词（跳过 OCR 扫描）
-            id_container_index.requestLookupKeyboard()
+            if (queryTweaks.typeByHand) id_container_index.requestLookupKeyboard()
+            else qmlGlobal.requestShowPage(YEnum.PageIndex.Dict)
             break
         case YEnum.PageIndex.UpdateOS:
             logManager.sendHttpLog("action=home_update_click")

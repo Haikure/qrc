@@ -7,7 +7,7 @@ Item {
     property string rawText: ""
     property string toolState: ""
     property real maxWidth: 300
-    property var fontFamily
+    property var fontFamily: fontManager.fontFamily
 
     property bool expanded: false
 
@@ -137,7 +137,7 @@ Item {
                     return "#8899AA";
                 }
                 font.pixelSize: 12
-                font.family: root.fontFamily || ""
+                font.family: root.fontFamily || fontManager.fontFamily
                 elide: Text.ElideRight
                 width: parent.width - searchIcon.width - parent.spacing
                 anchors.verticalCenter: parent.verticalCenter
@@ -229,7 +229,7 @@ Item {
                 text: root.rawText
                 color: "#667788"
                 font.pixelSize: 10
-                font.family: "Microsoft YaHei"
+                font.family: root.fontFamily || fontManager.fontFamily
                 wrapMode: Text.WrapAnywhere
                 textFormat: Text.PlainText
             }

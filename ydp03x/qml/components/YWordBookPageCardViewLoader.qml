@@ -17,14 +17,14 @@ YLoader {
     onActiveChanged: {
         wordBookManager.setCanAutoPlay(active)
         if (active) {
-            qmlGlobal.requestStopAutoScreenOff()
+            screenManager.reportAction("wordbook_cardview_enter")
             console.log("YWordBookPageSwitchLoader.qml===wordBookManager.loadMore on active")
             wordBookManager.loadMore()
         }
         else {
             console.log("YWordBookPageSwitchLoader.qml===wordBookManager.loadMore on inactive")
             stopPronounce()
-            qmlGlobal.requestStartAutoScreenOff()
+            screenManager.reportAction("wordbook_cardview_quit")
         }
     }
 

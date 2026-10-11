@@ -11,6 +11,39 @@ YPage {
     objectName: "YPage===YVoiceAssistant.qml"
     property string currentPlayingBaseImageName: "asr_starting"
     property var enterTimestamp: null
+    readonly property bool forwardVoiceToChat: !antiEmbs.active && mod.voiceChatEnabled
+    property bool voiceChatForwarded: false
+    property bool voiceChatCancelled: false
+    property int voiceChatSequence: 0
+
+    function cancelVoiceChat() {
+        voiceChatCancelled = true;
+        ++voiceChatSequence;
+    }
+
+    function forwardAsrResultToChat() {
+        if (!visible || !forwardVoiceToChat || voiceChatCancelled || voiceChatForwarded)
+            return false;
+        if (speechManager.recognizing !== YEnum.AS_ASREnd
+                && speechManager.recognizing !== YEnum.AS_QueryBeign)
+            return false;
+        var text = speechManager.asrResult.trim();
+        if (text.length === 0)
+            return false;
+        voiceChatForwarded = true;
+        mod.pendingVoiceChatText = text;
+        backButtonClicked();
+        qmlGlobal.requestShowThirdQML("ChatAssistant");
+        return true;
+    }
+
+    function scheduleVoiceChat() {
+        var sequence = voiceChatSequence;
+        Qt.callLater(function() {
+            if (sequence === voiceChatSequence)
+                forwardAsrResultToChat();
+        });
+    }
     YVerticalTitleBar {
         id: id_title_bar
         onCallBack: {
@@ -252,10 +285,13 @@ YPage {
     YSpeechAsrResult
     {
         id:speechAsrResultLoader
+        forwardToChat: id_touch_talk_page.forwardVoiceToChat
+        forwardAsrResult: id_touch_talk_page.forwardAsrResultToChat
         active: false
         asynchronous: false
         onCallback:
         {
+            id_touch_talk_page.cancelVoiceChat();
             popcurrentShowPage = null
             speechAsrResultLoader.active = false
             //speechAsrResultLoader.sourceComponent = undefined
@@ -265,13 +301,23 @@ YPage {
     Connections {
         target: speechManager
         ignoreUnknownSignals: true
+        enabled: id_touch_talk_page.visible
+        function onAsrResultChanged() {
+            if (speechManager.recognizing === YEnum.AS_ASREnd
+                    || speechManager.recognizing === YEnum.AS_QueryBeign)
+                id_touch_talk_page.scheduleVoiceChat();
+        }
         function onRecognizingChanged() {
             console.log("speechManager.recognizing-------------11",speechManager.recognizing)
             if (speechManager.recognizing === YEnum.AS_ASRBegin ){
+                ++id_touch_talk_page.voiceChatSequence;
+                id_touch_talk_page.voiceChatForwarded = false;
+                id_touch_talk_page.voiceChatCancelled = false;
                 speechAsrResultLoader.active = true
                 //  soundCenter.playMusic(qmlGlobal.tipsAudioPath+ "listen.mp3");
             } else if (speechManager.recognizing === YEnum.AS_ASREnd || speechManager.recognizing === YEnum.AS_QueryBeign) {
                 speechAsrResultLoader.active = true
+                id_touch_talk_page.scheduleVoiceChat();
             }
             else {
                 if (speechManager.recognizing === YEnum.AS_ASTip) {
@@ -299,6 +345,8 @@ YPage {
             qmlGlobal.currentPageIndex = YEnum.PageIndex.Speech
             logManager.sendHttpLog("view=assistant_view&query=%1".arg(speechManager.asrResult))
             enterTimestamp = new Date()
+        } else {
+            cancelVoiceChat();
         }
     }
     Component.onDestruction: {

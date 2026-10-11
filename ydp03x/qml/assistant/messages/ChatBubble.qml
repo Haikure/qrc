@@ -9,7 +9,7 @@ Rectangle {
     property bool isComplete: false
     property real maxBubbleWidth: 400
     property real containerWidth: YBaseEnum.Screen.Width
-    property var fontFamily
+    property var fontFamily: fontManager.fontFamily
 
     signal pressAndHold(real mouseX, real mouseY)
 
@@ -44,7 +44,7 @@ Rectangle {
         wrapMode: Text.WrapAnywhere
         color: "#FFFFFF"
         font.pixelSize: 14
-        font.family: root.fontFamily || ""
+        font.family: root.fontFamily || fontManager.fontFamily
         lineHeight: 1.3
         horizontalAlignment: Text.AlignLeft
         textFormat: (root.isUser || !root.isComplete) ? Text.PlainText : Text.RichText

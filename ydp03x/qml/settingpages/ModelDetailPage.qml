@@ -30,6 +30,7 @@ YBackButtonPage {
             "provider":       modelData.provider    || "",
             "endpoint":       modelData.endpoint    || "",
             "modelId":        modelData.modelId     || "",
+            "apiProtocol":    modelData.apiProtocol === "responses" ? "responses" : "chat_completions",
             "apiKey":         modelData.apiKey      || "",
             "temperature":    modelData.temperature !== undefined ? String(modelData.temperature) : "0.7",
             "maxContextSize": modelData.maxContextSize || 0,
@@ -38,6 +39,10 @@ YBackButtonPage {
             "capAudio":       cap.audio     || false,
             "capToolCall":    cap.toolCall  || false,
             "capReasoning":   cap.reasoning || false,
+            "capImageGeneration": cap.imageGeneration || false,
+            "reasoningEffort": modelData.reasoningEffort || "",
+            "nativeWebSearchEnabled": modelData.nativeWebSearchEnabled || false,
+            "nativeWebSearchProvider": modelData.nativeWebSearchProvider || "auto",
             "extraParams":    modelData.extraParams ? JSON.stringify(modelData.extraParams) : "",
             "proxyVisionModelId":  modelData.proxyVisionModelId  || "",
             "proxyVisionPrompt":   modelData.proxyVisionPrompt   || ""
@@ -48,7 +53,7 @@ YBackButtonPage {
         id_detail_pop.currentKey         = key;
         id_detail_pop.currentPlaceholder = placeholder;
         id_detail_pop.currentPrefill     = fd[key] !== undefined ? String(fd[key]) : "";
-        var component = qmlCreateComponent("YInputPage");
+        var component = qmlCreateComponent("input/YInputPage");
         if (Component.Ready === component.status) {
             var incubator = component.incubateObject(id_detail_pop.containerItem);
             if (incubator.status !== Component.Ready) {
@@ -75,15 +80,20 @@ YBackButtonPage {
             "provider":       fd.provider || "",
             "endpoint":       fd.endpoint,
             "modelId":        fd.modelId,
+            "apiProtocol":    fd.apiProtocol,
             "apiKey":         fd.apiKey || "",
-            "temperature":    parseFloat(fd.temperature) || 0.7,
+            "temperature":    isNaN(parseFloat(fd.temperature)) ? 0.7 : parseFloat(fd.temperature),
             "maxContextSize": fd.maxContextSize || 0,
+            "reasoningEffort": fd.capReasoning ? fd.reasoningEffort : "",
+            "nativeWebSearchEnabled": fd.apiProtocol === "responses" && fd.nativeWebSearchEnabled,
+            "nativeWebSearchProvider": fd.nativeWebSearchProvider || "auto",
             "capabilities": {
                 "text":      fd.capText,
                 "vision":    fd.capVision,
                 "audio":     fd.capAudio,
                 "toolCall":  fd.capToolCall,
-                "reasoning": fd.capReasoning
+                "reasoning": fd.capReasoning,
+                "imageGeneration": fd.capImageGeneration
             },
             "extraParams":    fd.extraParams || "",
             "proxyVisionModelId":  fd.proxyVisionModelId || "",
@@ -102,6 +112,35 @@ YBackButtonPage {
 
     function generateId(name) {
         return name.toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "model";
+    }
+
+    function setFormField(key, value) {
+        var next = {};
+        for (var field in fd) next[field] = fd[field];
+        next[key] = value;
+        fd = next;
+    }
+
+    function reasoningEffortLabel(value) {
+        var labels = { "": "默认", "none": "关闭", "minimal": "极低", "low": "低", "medium": "中", "high": "高", "xhigh": "极高" };
+        return labels[value] || "默认";
+    }
+
+    function cycleReasoningEffort() {
+        var values = ["", "none", "minimal", "low", "medium", "high", "xhigh"];
+        var index = values.indexOf(fd.reasoningEffort);
+        setFormField("reasoningEffort", values[(index + 1) % values.length]);
+    }
+
+    function nativeWebSearchProviderLabel(value) {
+        var labels = { "auto": "自动识别", "openai": "OpenAI", "xai": "xAI", "compatible": "兼容服务" };
+        return labels[value] || "自动识别";
+    }
+
+    function cycleNativeWebSearchProvider() {
+        var values = ["auto", "openai", "xai", "compatible"];
+        var index = values.indexOf(fd.nativeWebSearchProvider);
+        setFormField("nativeWebSearchProvider", values[(index + 1) % values.length]);
     }
 
     property var visionModelList: []
@@ -166,9 +205,9 @@ YBackButtonPage {
     // Toast
     Rectangle {
         anchors.horizontalCenter: parent.horizontalCenter
-        y: toastVisible ? 16 : -40
-        width: id_toast_text.implicitWidth + 32
-        height: 30
+        y: toastVisible ? 16 : -52
+        width: Math.min(parent.width - 40, id_toast_text.implicitWidth + 32)
+        height: 48
         radius: 6
         color: toastType === 2 ? "#4A1A1D" : toastType === 1 ? "#1A3A2A" : "#1A2A3A"
         z: 2000
@@ -181,17 +220,20 @@ YBackButtonPage {
         Text {
             id: id_toast_text
             anchors.centerIn: parent
+            width: parent.width - 32
+            horizontalAlignment: Text.AlignHCenter
+            elide: Text.ElideRight
             text: toastMsg
             color: toastType === 2 ? "#FF6B6B" : toastType === 1 ? "#4CAF50" : YColors.grayText
-            font.pixelSize: 12
+            font.pixelSize: 24
             font.family: fontManager.fontFamilyZhCn
         }
     }
 
     Flickable {
         anchors.fill: parent
-        anchors.leftMargin: 54
-        anchors.rightMargin: 10
+        anchors.leftMargin: 90
+        anchors.rightMargin: 16
         contentHeight: id_detail_col.height + 24
         clip: true
 
@@ -199,10 +241,10 @@ YBackButtonPage {
             id: id_detail_col
             anchors.left: parent.left
             anchors.right: parent.right
-            spacing: 6
+            spacing: 8
 
             YSettingItemTitle {
-                titlePixelSize: 22
+                titlePixelSize: 26
                 title: isNew ? "添加模型" : "编辑模型"
             }
 
@@ -210,7 +252,7 @@ YBackButtonPage {
             YText {
                 text: "基本信息"
                 color: YColors.grayText
-                font.pixelSize: 12
+                font.pixelSize: 24
                 anchors.left: parent.left
                 anchors.leftMargin: 4
             }
@@ -235,7 +277,7 @@ YBackButtonPage {
             YText {
                 text: "接口配置"
                 color: YColors.grayText
-                font.pixelSize: 12
+                font.pixelSize: 24
                 anchors.left: parent.left
                 anchors.leftMargin: 4
             }
@@ -256,6 +298,25 @@ YBackButtonPage {
                 onClicked: openKeyboard("modelId", "请输入模型 ID")
             }
 
+            DescribedSwitchItem {
+                objectName: "ModelResponsesApi"
+                title: "Responses API"
+                description: "使用 /responses 协议"
+                switchOn: fd.apiProtocol === "responses"
+                interval: 0
+                toggleSwitchOnClick: false
+                onTimerTriggered: {
+                    var responses = fd.apiProtocol !== "responses";
+                    var chatEndpoint = "https://api.deepseek.com/v1/chat/completions";
+                    var responsesEndpoint = "https://api.deepseek.com/v1/responses";
+                    if (responses && fd.endpoint === chatEndpoint)
+                        setFormField("endpoint", responsesEndpoint);
+                    else if (!responses && fd.endpoint === responsesEndpoint)
+                        setFormField("endpoint", chatEndpoint);
+                    setFormField("apiProtocol", responses ? "responses" : "chat_completions");
+                }
+            }
+
             DescribedClickableTextBox {
                 title: "API 密钥"
                 describe: fd.apiKey ? "●".repeat(Math.min(fd.apiKey.length, 12)) : "点击输入身份验证密钥"
@@ -268,7 +329,7 @@ YBackButtonPage {
             YText {
                 text: "高级选项"
                 color: YColors.grayText
-                font.pixelSize: 12
+                font.pixelSize: 24
                 anchors.left: parent.left
                 anchors.leftMargin: 4
             }
@@ -301,7 +362,7 @@ YBackButtonPage {
             YText {
                 text: "模型能力"
                 color: YColors.grayText
-                font.pixelSize: 12
+                font.pixelSize: 24
                 anchors.left: parent.left
                 anchors.leftMargin: 4
             }
@@ -311,15 +372,18 @@ YBackButtonPage {
                 description: "支持文本输入与生成"
                 switchOn: fd.capText
                 interval: 0
-                onTimerTriggered: { fd.capText = switchOn; fd = fd; }
+                toggleSwitchOnClick: false
+                onTimerTriggered: setFormField("capText", !fd.capText)
             }
 
             DescribedSwitchItem {
+                objectName: "ModelVision"
                 title: "图像（Vision）"
                 description: "支持图片输入"
                 switchOn: fd.capVision
                 interval: 0
-                onTimerTriggered: { fd.capVision = switchOn; fd = fd; }
+                toggleSwitchOnClick: false
+                onTimerTriggered: setFormField("capVision", !fd.capVision)
             }
 
             DescribedSwitchItem {
@@ -327,7 +391,8 @@ YBackButtonPage {
                 description: "支持音频输入"
                 switchOn: fd.capAudio
                 interval: 0
-                onTimerTriggered: { fd.capAudio = switchOn; fd = fd; }
+                toggleSwitchOnClick: false
+                onTimerTriggered: setFormField("capAudio", !fd.capAudio)
             }
 
             DescribedSwitchItem {
@@ -335,22 +400,67 @@ YBackButtonPage {
                 description: "支持函数调用"
                 switchOn: fd.capToolCall
                 interval: 0
-                onTimerTriggered: { fd.capToolCall = switchOn; fd = fd; }
+                toggleSwitchOnClick: false
+                onTimerTriggered: setFormField("capToolCall", !fd.capToolCall)
             }
 
             DescribedSwitchItem {
+                objectName: "ModelReasoning"
                 title: "推理（Reasoning）"
                 description: "支持思维链推理模式"
                 switchOn: fd.capReasoning
                 interval: 0
-                onTimerTriggered: { fd.capReasoning = switchOn; fd = fd; }
+                toggleSwitchOnClick: false
+                onTimerTriggered: setFormField("capReasoning", !fd.capReasoning)
+            }
+
+            DescribedSwitchItem {
+                objectName: "ModelImageGeneration"
+                title: "图片生成"
+                description: "使用 Responses API 图片生成工具"
+                switchOn: fd.capImageGeneration
+                enabled: fd.apiProtocol === "responses"
+                interval: 0
+                toggleSwitchOnClick: false
+                onTimerTriggered: setFormField("capImageGeneration", !fd.capImageGeneration)
+            }
+
+            DescribedSwitchItem {
+                objectName: "ModelNativeWebSearch"
+                title: "厂商联网搜索"
+                description: "使用 Responses API 原生搜索工具"
+                switchOn: fd.nativeWebSearchEnabled
+                enabled: fd.apiProtocol === "responses"
+                interval: 0
+                toggleSwitchOnClick: false
+                onTimerTriggered: setFormField("nativeWebSearchEnabled", !fd.nativeWebSearchEnabled)
+            }
+
+            DescribedClickableTextBox {
+                objectName: "ModelWebSearchProvider"
+                title: "联网搜索来源"
+                describe: nativeWebSearchProviderLabel(fd.nativeWebSearchProvider)
+                describeItem.color: YColors.grayText
+                visible: fd.apiProtocol === "responses" && fd.nativeWebSearchEnabled
+                opacityChangableWhenPressed: false
+                onClicked: cycleNativeWebSearchProvider()
+            }
+
+            DescribedClickableTextBox {
+                objectName: "ModelReasoningEffort"
+                title: "思考强度"
+                describe: reasoningEffortLabel(fd.reasoningEffort)
+                describeItem.color: fd.reasoningEffort ? YColors.blueText : YColors.grayText
+                visible: fd.capReasoning
+                opacityChangableWhenPressed: false
+                onClicked: cycleReasoningEffort()
             }
 
             // ─── 视觉代理设置（仅 Vision 关闭时显示）────
             YText {
                 text: "视觉代理设置"
                 color: YColors.grayText
-                font.pixelSize: 12
+                font.pixelSize: 24
                 anchors.left: parent.left
                 anchors.leftMargin: 4
                 visible: !fd.capVision
@@ -381,16 +491,12 @@ YBackButtonPage {
                 onClicked: openKeyboard("proxyVisionPrompt", "请输入发给视觉模型的分析提示词")
             }
 
-            YSettingAboutClickableItem {
-                titlePixelSize: 20
-                valuePixelSize: 18
+            PenModsSettingRow {
                 title: isNew ? "添加模型" : "保存修改"
                 onClicked: saveModel()
             }
 
-            YSettingAboutClickableItem {
-                titlePixelSize: 20
-                valuePixelSize: 18
+            PenModsSettingRow {
                 title: "删除模型"
                 visible: !isNew
                 onClicked: {
@@ -414,48 +520,48 @@ YBackButtonPage {
         }
 
         Rectangle {
-            width: 260
-            height: Math.min(260, visionModelList.length * 40 + 80)
-            color: "#1C1C1E"
-            radius: 12
+            objectName: "ModelProxySelector"
+            width: Math.min(parent.width - 120, 640)
+            height: Math.min(parent.height - 32, visionModelList.length * 76 + 88)
+            color: YColors.grayNormal
+            radius: 16
             anchors.centerIn: parent
 
-            Column {
-                anchors.fill: parent
-                anchors.margins: 12
-                spacing: 4
+            // Consume taps inside the dialog without dismissing it.
+            MouseArea { anchors.fill: parent }
 
-                YText {
-                    text: "选择视觉代理模型"
-                    color: "white"
-                    font.pixelSize: 13
-                    anchors.horizontalCenter: parent.horizontalCenter
-                }
+            YText {
+                id: proxyTitle
+                text: "选择视觉代理模型"
+                color: YColors.white
+                font.pixelSize: 26
+                anchors.top: parent.top
+                anchors.topMargin: 16
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
 
-                Rectangle { width: parent.width - 24; height: 1; color: "#333"; anchors.horizontalCenter: parent.horizontalCenter }
+            Flickable {
+                anchors.top: proxyTitle.bottom
+                anchors.topMargin: 12
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.margins: 16
+                contentHeight: id_proxy_model_col.height
+                clip: true
 
-                Flickable {
-                    width: parent.width - 8
-                    height: parent.height - 52
-                    contentHeight: id_proxy_model_col.height
-                    clip: true
+                Column {
+                    id: id_proxy_model_col
+                    width: parent.width
 
-                    Column {
-                        id: id_proxy_model_col
-                        width: parent.width
-
-                        Repeater {
-                            model: visionModelList
-                            YSettingAboutClickableItem {
-                titlePixelSize: 20
-                valuePixelSize: 18
-                                title: modelData.modelName
-                                imageName: modelData.modelId === fd.proxyVisionModelId ? 'settings/st-check' : ''
-                                onClicked: {
-                                    fd.proxyVisionModelId = modelData.modelId;
-                                    fd = fd;
-                                    proxySelectorOpen = false;
-                                }
+                    Repeater {
+                        model: visionModelList
+                        PenModsSettingRow {
+                            title: modelData.modelName
+                            checked: modelData.modelId === fd.proxyVisionModelId
+                            onClicked: {
+                                setFormField("proxyVisionModelId", modelData.modelId);
+                                proxySelectorOpen = false;
                             }
                         }
                     }
@@ -514,26 +620,25 @@ YBackButtonPage {
                 if (input !== null) {
                     if (key === "temperature") {
                         var t = parseFloat(input);
-                        fd[key] = isNaN(t) ? "0.7" : String(Math.max(0, Math.min(2, t)));
+                        setFormField(key, isNaN(t) ? "0.7" : String(Math.max(0, Math.min(2, t))));
                     } else if (key === "maxContextSize") {
                         var n = parseInt(input);
-                        fd[key] = (isNaN(n) || n < 0) ? 0 : n;
+                        setFormField(key, (isNaN(n) || n < 0) ? 0 : n);
                     } else if (key === "extraParams") {
                         if (input.trim() !== "") {
                             try {
                                 JSON.parse(input);
-                                fd[key] = input;
+                                setFormField(key, input);
                             } catch(e) {
                                 showToast("额外参数不是合法 JSON，已清空", 2);
-                                fd[key] = "";
+                                setFormField(key, "");
                             }
                         } else {
-                            fd[key] = "";
+                            setFormField(key, "");
                         }
                     } else {
-                        fd[key] = input;
+                        setFormField(key, input);
                     }
-                    fd = fd;
                 }
             });
 

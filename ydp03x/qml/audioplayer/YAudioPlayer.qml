@@ -27,6 +27,26 @@ Item {
         }
     }
     property int lrcStateIndex: 0
+    function reportLrcScene() {
+        screenManager.reportAction(visible && state === "show" && mediaPlayerManager.hasLrc
+            && mediaPlayerManager.lrcState !== YEnum.LS_HIDE ? "musicplayer_lrc_show" : "musicplayer_lrc_hide");
+    }
+    onStateChanged: reportLrcScene()
+    onVisibleChanged: reportLrcScene()
+    Connections {
+        target: mediaPlayerManager
+        function onLrcStateChanged() { id_audio_player.reportLrcScene(); }
+        function onHasLrcChanged() { id_audio_player.reportLrcScene(); }
+    }
+    Connections {
+        target: musicPlayer
+        function onHideFloatingWindowChanged() {
+            if (id_audio_player.state !== "close") return;
+            if (musicPlayer.hideFloatingWindow) id_audio_player_indicator.hide();
+            else if (mediaPlayerManager.playState !== YEnum.STOPPED) id_audio_player_indicator.show();
+        }
+        function onStopRequested() { id_audio_player_indicator.hide(); }
+    }
 
     function show() {
         state = "show"
@@ -49,10 +69,12 @@ Item {
         id_audioplayer_submithomework_dialog_loader.active = false
         state = "close"
         if ((YEnum.PM_AudioPlayer === playerMode || YEnum.PM_StoreAudio === playerMode) && YEnum.STOPPED !== mediaPlayerManager.playState) {
-            id_audio_player_indicator.show()
+            if (musicPlayer.hideFloatingWindow) id_audio_player_indicator.hide()
+            else id_audio_player_indicator.show()
             id_audio_player_indicator.closeExtendState()
         } else {
             mediaPlayerManager.onClickedPause()
+            musicPlayer.releaseAudioAfterHide()
         }
         id_ver_play_bar.setFollowEnabledState(false)
         raise()
@@ -64,6 +86,7 @@ Item {
         id_audioplayer_submithomework_dialog_loader.active = false
         visible = false
         playStatePauseConfirm()
+        musicPlayer.releaseAudioAfterHide()
     }
 
     function raise() {
@@ -416,6 +439,8 @@ Item {
                 }
 
                 function onCurrentPageIndexChanged() {
+                    if (qmlGlobal.currentPageIndex !== YEnum.PageIndex.Dict && musicPlayer.isScanPauseActive())
+                        musicPlayer.finishScanPause();
                     if (qmlGlobal.currentPageIndex === YEnum.PageIndex.MathTutor
                             || qmlGlobal.currentPageIndex === YEnum.PageIndex.UpdateOS) {
                         console.log("YAudioPlayer.qml====onCurrentPageIndexChanged")

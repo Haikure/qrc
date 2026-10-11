@@ -3,7 +3,7 @@ import QtQuick 2.12
 Item {
     id: root
 
-    property var fontFamily
+    property var fontFamily: fontManager.fontFamily
     property bool tavilyEnabled: false
     property bool tavilyConfigured: false
 
@@ -95,7 +95,7 @@ Item {
                         text: "网络搜索"
                         color: "white"
                         font.pixelSize: 12
-                        font.family: root.fontFamily || ""
+                        font.family: root.fontFamily || fontManager.fontFamily
                     }
                 }
                 MouseArea {
@@ -116,14 +116,14 @@ Item {
                     Text {
                         text: "📁"
                         font.pixelSize: 18
-                        font.family: root.fontFamily || ""
+                        font.family: root.fontFamily || fontManager.fontFamily
                         anchors.horizontalCenter: parent.horizontalCenter
                     }
                     Text {
                         text: "引用文件"
                         color: "white"
                         font.pixelSize: 12
-                        font.family: root.fontFamily || ""
+                        font.family: root.fontFamily || fontManager.fontFamily
                     }
                 }
                 MouseArea {
@@ -144,14 +144,14 @@ Item {
                     Text {
                         text: "✨"
                         font.pixelSize: 18
-                        font.family: root.fontFamily || ""
+                        font.family: root.fontFamily || fontManager.fontFamily
                         anchors.horizontalCenter: parent.horizontalCenter
                     }
                     Text {
                         text: "新对话"
                         color: "white"
                         font.pixelSize: 12
-                        font.family: root.fontFamily || ""
+                        font.family: root.fontFamily || fontManager.fontFamily
                     }
                 }
                 MouseArea {
@@ -172,14 +172,14 @@ Item {
                     Text {
                         text: "📷"
                         font.pixelSize: 18
-                        font.family: root.fontFamily || ""
+                        font.family: root.fontFamily || fontManager.fontFamily
                         anchors.horizontalCenter: parent.horizontalCenter
                     }
                     Text {
                         text: "拍摄图片"
                         color: "white"
                         font.pixelSize: 12
-                        font.family: root.fontFamily || ""
+                        font.family: root.fontFamily || fontManager.fontFamily
                     }
                 }
                 MouseArea {

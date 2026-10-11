@@ -327,7 +327,9 @@ languageType: 0
                 anchors.topMargin: 24
                 anchors.left: id_title_bar.left
                 anchors.leftMargin: 20
-                namesArray: settingManager.isPepVersion ? [YTranslateText.word] : [YTranslateText.word, YTranslateText.sentence]
+                namesArray: settingManager.isPepVersion ? [YTranslateText.word]
+                          : workBookTweaks.phraseTab ? [YTranslateText.word, "短语", YTranslateText.sentence]
+                          : [YTranslateText.word, YTranslateText.sentence]
 
                 onCurrentIndexChanged: {
                     updateUI()
@@ -335,6 +337,10 @@ languageType: 0
                 }
 
                 function updateUI() {
+                    if (workBookTweaks.phraseTab && !settingManager.isPepVersion) {
+                        wordBookManager.tabType = currentIndex === 0 ? 2 : (currentIndex === 1 ? 3 : YEnum.WGT_Sentence);
+                        return;
+                    }
                     if (currentIndex === 0) {
                         wordBookManager.tabType = YEnum.WGT_Ch_Group;
                     } else if (currentIndex === 1) {
@@ -347,6 +353,13 @@ languageType: 0
 
                 Component.onCompleted: {
                     updateUI()
+                }
+                Connections {
+                    target: workBookTweaks
+                    function onPhraseTabChanged() {
+                        id_tab_title_bar.currentIndex = 0;
+                        id_tab_title_bar.updateUI();
+                    }
                 }
             }
 

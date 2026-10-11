@@ -1,3 +1,5 @@
+import BaseQml 1.0
+import com.youdao.pen 1.0
 import QtQuick 2.12
 import "MessageLayoutCache.js" as MessageLayoutCache
 
@@ -8,8 +10,10 @@ Item {
     property bool isComplete: false
     property bool serverAvailable: false
     property real maxWidth: 300
-    property var fontFamily
+    property var fontFamily: fontManager.fontFamily
     property bool layoutBusy: false
+    // 流式期间只渲染尾部文本。
+    property bool streamTailOnly: false
     property int parseDelay: 16
     readonly property bool renderReady: _renderReady && !crossFadeAnimation.running
 
@@ -73,7 +77,7 @@ Item {
             }
             return;
         }
-        // A completed block tree must be committed before considering a deferred parse.
+        // Commit a completed block tree before a deferred parse.
         if (_commitPending || (_blocks.length > 0 && _loadedBlocks >= _blocks.length)) {
             _parsePending = false;
             _commitRender();
@@ -96,8 +100,7 @@ Item {
         if (!isComplete)
             return;
 
-        // QML applies model roles independently when a delegate is created. Avoid
-        // restarting the same parse for rawText, isComplete, and completion events.
+        // Avoid restarting the same parse for the same rawText.
         if (_hasRenderSource && _renderSource === rawText
                 && (_renderReady || parseTimer.running || _parsePending || _parseRequestId !== ""
                     || _blocks.length > 0 || _useFastPath || commitSettleTimer.running
@@ -311,16 +314,16 @@ Item {
         id: streamingText
         opacity: root.isComplete ? 0 : 1
         width: root.maxWidth
-        text: root.rawText
+        text: root.streamTailOnly && root.rawText.length > 1500 ? root.rawText.slice(-1500) : root.rawText
         textFormat: Text.PlainText
         wrapMode: Text.WrapAnywhere
         color: "#FFFFFF"
         font.pixelSize: 14
-        font.family: root.fontFamily || ""
+        font.family: root.fontFamily || fontManager.fontFamily
         lineHeight: 1.3
     }
 
-    // 完成态先显示廉价纯文本，富文本准备好后原子替换。
+    // 完成态的纯文本占位。
     Item {
         id: skeletonPlaceholder
         visible: root.isComplete && root._showSkeleton
@@ -335,7 +338,7 @@ Item {
             wrapMode: Text.WrapAnywhere
             color: "#D7E3EE"
             font.pixelSize: 14
-            font.family: root.fontFamily || ""
+            font.family: root.fontFamily || fontManager.fontFamily
             lineHeight: 1.3
         }
     }
@@ -362,7 +365,7 @@ Item {
             wrapMode: Text.WrapAnywhere
             color: "#FFFFFF"
             font.pixelSize: 14
-            font.family: root.fontFamily || ""
+            font.family: root.fontFamily || fontManager.fontFamily
             lineHeight: 1.3
             linkColor: "#62A8EA"
         }
@@ -474,7 +477,7 @@ Item {
                 wrapMode: Text.WrapAnywhere
                 color: "#D4D4D4"
                 font.pixelSize: 12
-                font.family: "Courier New, Consolas, monospace"
+                font.family: root.fontFamily || fontManager.fontFamily
                 lineHeight: 1.4
             }
         }
@@ -518,7 +521,7 @@ Item {
             color: "#FFFFFF"
             font.pixelSize: _headingSize(mLevel)
             font.bold: true
-            font.family: root.fontFamily || ""
+            font.family: root.fontFamily || fontManager.fontFamily
             lineHeight: 1.3
 
             function _headingSize(level) {
@@ -552,7 +555,7 @@ Item {
                         text: listBlockRoot.mOrdered ? (index + 1) + "." : "•"
                         color: "#AAAAAA"
                         font.pixelSize: 14
-                        font.family: root.fontFamily || ""
+                        font.family: root.fontFamily || fontManager.fontFamily
                         width: listBlockRoot.mOrdered ? 20 : 12
                     }
 
@@ -622,7 +625,7 @@ Item {
             wrapMode: Text.WrapAnywhere
             color: "#AAAAAA"
             font.pixelSize: 14
-            font.family: root.fontFamily || ""
+            font.family: root.fontFamily || fontManager.fontFamily
             font.italic: true
             lineHeight: 1.3
         }
@@ -661,7 +664,7 @@ Item {
                 wrapMode: Text.WrapAnywhere
                 color: "#DDDDDD"
                 font.pixelSize: 11
-                font.family: root.fontFamily || ""
+                font.family: root.fontFamily || fontManager.fontFamily
                 lineHeight: 1.2
 
                 function _tableHtml() {
@@ -740,7 +743,7 @@ Item {
             wrapMode: Text.WrapAnywhere
             color: "#FFFFFF"
             font.pixelSize: 14
-            font.family: root.fontFamily || ""
+            font.family: root.fontFamily || fontManager.fontFamily
             lineHeight: 1.3
             linkColor: "#62A8EA"
             verticalAlignment: Text.AlignVCenter
@@ -752,16 +755,6 @@ Item {
         if (!raw || raw.length === 0)
             return "";
 
-        if (typeof chatbot !== "undefined" && chatbot !== null && chatbot.markdownToHtml) {
-            var html = chatbot.markdownToHtml(raw);
-            if (html && html.length > 0) {
-                html = html.replace(/^\s*<p[^>]*>/i, "");
-                html = html.replace(/<\/p>\s*$/i, "");
-                html = html.replace(/\n/g, "");
-                return html;
-            }
-        }
-
         var t = raw;
 
         t = t.replace(/&/g, "&amp;")
@@ -771,7 +764,7 @@ Item {
         var codeSpans = [];
         t = t.replace(/`([^`\n]+?)`/g, function(match, code) {
             var ph = "\x00C" + codeSpans.length + "\x00";
-            codeSpans.push('<code style="background:#3a3a3a;padding:1px 4px;border-radius:3px;font-family:Consolas,monospace;font-size:12px;color:#E8A0BF">' + code + '</code>');
+            codeSpans.push('<span style="background:#3a3a3a;padding:1px 4px;border-radius:3px;font-size:12px;color:#E8A0BF">' + code + '</span>');
             return ph;
         });
 
@@ -807,7 +800,7 @@ Item {
             return cachedHtml;
         var html = "";
         if (typeof chatbot !== "undefined" && chatbot !== null && chatbot.markdownToHtml)
-            html = chatbot.markdownToHtml(raw);
+            html = chatbot.markdownToHtml(raw, root.fontFamily || fontManager.fontFamily);
         if (!html || html.length === 0)
             html = _renderMarkdownInline(raw).replace(/\n/g, "<br>");
         MessageLayoutCache.setHtml(raw, html);

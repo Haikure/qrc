@@ -1320,7 +1320,9 @@ YPage {
                                 || YEnum.DtJapToCh === dictType
                                 //中日
                                 || YEnum.DtChToJap === dictType
+                                || dictType === customDict.dictTypeId
                         sourceComponent: {
+                            if (dictType === customDict.dictTypeId) return id_dt_penmods_component;
                             getDictContentValue(dictType,content,index)
                             if(dictType === YEnum.AsyncLocalTran || dictType === YEnum.NetTran)
                                 isNeedVisibleAiButton = true
@@ -1401,6 +1403,11 @@ YPage {
                                     addDictItemToNavigation(title, type, subType, dictNode)
                                 }
                             }
+                        }
+
+                        Component {
+                            id: id_dt_penmods_component
+                            YDictTypeDtPenMods {}
                         }
 
                         Component {

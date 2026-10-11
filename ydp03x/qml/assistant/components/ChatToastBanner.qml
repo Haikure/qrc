@@ -4,7 +4,7 @@ import QtGraphicalEffects 1.12
 Rectangle {
     id: root
 
-    property var fontFamily
+    property var fontFamily: fontManager.fontFamily
 
     width: Math.min(parent.width - 32, Math.max(280, toastContent.implicitWidth + 48))
     height: toastContent.implicitHeight + 24
@@ -179,7 +179,7 @@ Rectangle {
             text: internal.message
             color: internal.textColor
             font.pixelSize: 14
-            font.family: root.fontFamily || ""
+            font.family: root.fontFamily || fontManager.fontFamily
             font.weight: Font.Medium
             anchors.verticalCenter: parent.verticalCenter
             wrapMode: Text.Wrap

@@ -1,14 +1,12 @@
-import QtQuick 2.12
+import BaseQml 1.0
 import com.youdao.pen 1.0
+import QtQuick 2.12
 
-/*
- * ChatMessageIndexPanel - 当前会话消息索引面板
- * 从右侧滑入显示，列出当前会话的所有消息摘要，点击可导航到对应消息位置
- */
+// 当前会话的消息索引面板，从右侧滑入。
 Rectangle {
     id: id_root
     width: 0
-    height: parent ? parent.height : YBaseEnum.Screen.Height
+    height: parent ? parent.height : 170
     color: "#1A2432"
     clip: true
     z: 100
@@ -16,10 +14,10 @@ Rectangle {
 
     // 面板宽度（动画目标值）
     property real panelWidth: 175
-    property var fontFamily
+    property var fontFamily: fontManager.fontFamily
     // 是否正在显示
     property bool isOpen: false
-    // 实际聊天 ListModel；索引必须与消息 ListView 的 delegate 索引一致。
+    // 实际聊天 ListModel。
     property var messageModel: null
     // 消息摘要列表模型: [{index, role, preview}]
     property var messagePreviews: []
@@ -31,7 +29,7 @@ Rectangle {
     // 动画控制
     Behavior on width {
         NumberAnimation {
-            duration: 250
+            duration: 130
             easing.type: Easing.OutCubic
         }
     }
@@ -55,8 +53,7 @@ Rectangle {
     }
 
     function refreshPreviews() {
-        // Build from the exact ListModel used by the chat ListView. Backend history
-        // indices diverge when reasoning and grouped tool cards create extra delegates.
+        // Build previews from the chat ListView's own model.
         var newPreviews = [];
         if (!messageModel || messageModel.count === undefined) {
             messagePreviews = newPreviews;
@@ -111,7 +108,7 @@ Rectangle {
                 text: "消息索引"
                 color: "#FFFFFF"
                 font.pixelSize: 12
-                font.family: id_root.fontFamily || ""
+                font.family: id_root.fontFamily || fontManager.fontFamily
                 font.bold: true
                 anchors {
                     left: parent.left
@@ -134,7 +131,7 @@ Rectangle {
                     text: "✕"
                     color: "#8899AA"
                     font.pixelSize: 14
-                    font.family: id_root.fontFamily || ""
+                    font.family: id_root.fontFamily || fontManager.fontFamily
                     anchors.centerIn: parent
                 }
 
@@ -200,7 +197,7 @@ Rectangle {
                             text: modelData.role
                             color: "#FFFFFF"
                             font.pixelSize: 9
-                            font.family: id_root.fontFamily || ""
+                            font.family: id_root.fontFamily || fontManager.fontFamily
                             font.bold: true
                             anchors.centerIn: parent
                         }
@@ -211,7 +208,7 @@ Rectangle {
                         text: modelData.preview
                         color: "#8899AA"
                         font.pixelSize: 10
-                        font.family: id_root.fontFamily || ""
+                        font.family: id_root.fontFamily || fontManager.fontFamily
                         elide: Text.ElideRight
                         maximumLineCount: 1
                         wrapMode: Text.NoWrap

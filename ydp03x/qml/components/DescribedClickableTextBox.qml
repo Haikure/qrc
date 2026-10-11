@@ -6,27 +6,22 @@ import "../components"
 
 YSettingItemBackground {
     id: id_described_clickable_item
-    implicitHeight: 46 + id_describe.contentHeight
-    opacity: (opacityChangableWhenPressed && (id_button.pressed || !enabled)) ? 0.6 : 1
-    scale: (id_button.pressed || !enabled) ? 0.95 : 1.0
+    implicitHeight: Math.max(76, 68 + (id_describe.visible ? id_describe.contentHeight + 4 : 0))
+    opacity: !enabled ? 0.6 : opacityChangableWhenPressed && id_button.pressed ? 0.85 : 1
+    scale: (id_button.pressed) ? 0.99 : 1.0
 
     Behavior on opacity {
         NumberAnimation {
-            duration: 150
+            duration: 90
             easing.type: Easing.OutCubic
         }
     }
 
     Behavior on scale {
         NumberAnimation {
-            duration: 150
+            duration: 90
             easing.type: Easing.OutCubic
         }
-    }
-
-    transform: Scale {
-        origin.x: id_described_clickable_item.width / 2
-        origin.y: id_described_clickable_item.height / 2
     }
 
     property alias title: id_title.text
@@ -44,19 +39,23 @@ YSettingItemBackground {
         id: id_title
         anchors.top: parent.top
         anchors.left: parent.left
-        anchors.topMargin: 10
-        anchors.leftMargin: 10
-        font.pixelSize: 20
+        anchors.topMargin: 16
+        anchors.leftMargin: 20
+        font.pixelSize: 28
+        width: parent.width - 40 - (id_value.visible ? id_value.width + 20 : 0)
+        elide: Text.ElideRight
     }
 
     YText {
         id: id_describe
         anchors.top: id_title.bottom
         anchors.left: parent.left
-        anchors.leftMargin: 10
+        anchors.leftMargin: 20
         color: YColors.grayText
-        font.pixelSize: 12
-        width: parent.width - id_value.anchors.rightMargin - 80
+        font.pixelSize: 24
+        visible: text.length > 0
+        anchors.topMargin: 4
+        width: parent.width - 40 - (id_value.visible ? id_value.width + 20 : 0)
         wrapMode: Text.Wrap
     }
 
@@ -65,8 +64,10 @@ YSettingItemBackground {
         color: YColors.grayText
         anchors.verticalCenter: parent.verticalCenter
         anchors.right: parent.right
-        anchors.rightMargin: 10
-        font.pixelSize: 13
+        anchors.rightMargin: 20
+        font.pixelSize: 26
+        width: Math.min(implicitWidth, parent.width * 0.4)
+        elide: Text.ElideMiddle
         visible: text.length > 0
     }
 

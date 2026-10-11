@@ -6,7 +6,7 @@ Item {
 
     property var chatModel: null
     property var blurSource: null
-    property var fontFamily
+    property var fontFamily: fontManager.fontFamily
 
     signal editRequested(int index)
     signal regenerateRequested(int index)
@@ -133,7 +133,7 @@ Item {
                     text: "编辑"
                     color: "white"
                     font.pixelSize: 16
-                    font.family: root.fontFamily || ""
+                    font.family: root.fontFamily || fontManager.fontFamily
                     anchors.centerIn: parent
                 }
 
@@ -166,7 +166,7 @@ Item {
                     text: "重新生成"
                     color: "#007AFF"
                     font.pixelSize: 16
-                    font.family: root.fontFamily || ""
+                    font.family: root.fontFamily || fontManager.fontFamily
                     anchors.centerIn: parent
                 }
 
@@ -197,7 +197,7 @@ Item {
                     text: "删除本条"
                     color: "#FF453A"
                     font.pixelSize: 16
-                    font.family: root.fontFamily || ""
+                    font.family: root.fontFamily || fontManager.fontFamily
                     anchors.centerIn: parent
                 }
 
@@ -223,7 +223,7 @@ Item {
                     text: "删除本条及后续"
                     color: "#FF453A"
                     font.pixelSize: 16
-                    font.family: root.fontFamily || ""
+                    font.family: root.fontFamily || fontManager.fontFamily
                     anchors.centerIn: parent
                 }
 

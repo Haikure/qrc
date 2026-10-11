@@ -29,7 +29,7 @@ YBackButtonPage {
         id_detail_pop.currentKey         = key;
         id_detail_pop.currentPlaceholder = placeholder;
         id_detail_pop.currentPrefill     = fd[key] !== undefined ? String(fd[key]) : "";
-        var component = qmlCreateComponent("YInputPage");
+        var component = qmlCreateComponent("input/YInputPage");
         if (Component.Ready === component.status) {
             var incubator = component.incubateObject(id_detail_pop.containerItem);
             if (incubator.status !== Component.Ready) {
@@ -89,9 +89,9 @@ YBackButtonPage {
 
     Rectangle {
         anchors.horizontalCenter: parent.horizontalCenter
-        y: toastVisible ? 16 : -40
-        width: id_toast_text.implicitWidth + 32
-        height: 30
+        y: toastVisible ? 16 : -52
+        width: Math.min(parent.width - 40, id_toast_text.implicitWidth + 32)
+        height: 48
         radius: 6
         color: toastType === 2 ? "#4A1A1D" : toastType === 1 ? "#1A3A2A" : "#1A2A3A"
         z: 2000
@@ -104,17 +104,20 @@ YBackButtonPage {
         Text {
             id: id_toast_text
             anchors.centerIn: parent
+            width: parent.width - 32
+            horizontalAlignment: Text.AlignHCenter
+            elide: Text.ElideRight
             text: toastMsg
             color: toastType === 2 ? "#FF6B6B" : toastType === 1 ? "#4CAF50" : YColors.grayText
-            font.pixelSize: 12
+            font.pixelSize: 24
             font.family: fontManager.fontFamilyZhCn
         }
     }
 
     Flickable {
         anchors.fill: parent
-        anchors.leftMargin: 54
-        anchors.rightMargin: 10
+        anchors.leftMargin: 90
+        anchors.rightMargin: 16
         contentHeight: id_detail_col.height + 24
         clip: true
 
@@ -125,7 +128,7 @@ YBackButtonPage {
             spacing: 8
 
             YSettingItemTitle {
-                titlePixelSize: 22
+                titlePixelSize: 26
                 title: isNew ? "添加提示词" : "编辑提示词"
             }
 
@@ -147,15 +150,15 @@ YBackButtonPage {
             }
 
             YSettingAboutClickableItem {
-                titlePixelSize: 20
-                valuePixelSize: 18
+                titlePixelSize: 28
+                valuePixelSize: 26
                 title: isNew ? "添加提示词" : "保存修改"
                 onClicked: savePrompt()
             }
 
             YSettingAboutClickableItem {
-                titlePixelSize: 20
-                valuePixelSize: 18
+                titlePixelSize: 28
+                valuePixelSize: 26
                 title: "删除提示词"
                 visible: !isNew
                 onClicked: {

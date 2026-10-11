@@ -4,6 +4,7 @@ import com.youdao.pen 1.0
 
 import BaseQml 1.0
 import "./i18n"
+import "./settingpages"
 
 YWindow {
     id: id_main_window
@@ -336,6 +337,10 @@ YWindow {
         id: id_scan_guide_component
         YScanGuidePage {
         }
+    }
+
+    PenModsAntiEmbsUnlock {
+        anchors.fill: parent
     }
 
     YLoader {

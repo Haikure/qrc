@@ -1,5 +1,6 @@
-import QtQuick 2.12
+import BaseQml 1.0
 import com.youdao.pen 1.0
+import QtQuick 2.15
 
 Item {
     id: root
@@ -13,26 +14,35 @@ Item {
     property bool isReasoning: false
     property bool isToolCall: false
     property string toolState: ""
+    property string attachmentsJson: "[]"
+    readonly property var attachments: {
+        try {
+            return JSON.parse(attachmentsJson || "[]");
+        } catch (error) {
+            return [];
+        }
+    }
     property bool mathServerAvailable: false
     property bool textureCacheEnabled: true
     property string renderMode: "full"
     property bool listMoving: false
+    property bool listScrolledUp: false
     property bool navigationJumping: false
     property int messageIndex: -1
-    property real listWidth: YBaseEnum.Screen.Width
+    property real listWidth: 320
     property real listContentY: 0
-    property real listViewportHeight: 0
+    property real listViewportHeight: 170
     property real richPreloadMargin: 510
     readonly property bool richContentNearViewport:
-        listViewportHeight <= 0
-        || (y + Math.max(height, 44) >= listContentY - richPreloadMargin
-            && y <= listContentY + listViewportHeight + richPreloadMargin)
-    property var fontFamily
+        y + Math.max(height, 44) >= listContentY - richPreloadMargin
+        && y <= listContentY + listViewportHeight + richPreloadMargin
+    property var fontFamily: fontManager.fontFamily
     property bool _pooled: false
 
     signal longPressed(real globalX, real globalY, int msgIndex)
     signal toolCardExpansionStarted(bool expanding)
     signal richContentCommitStarted(real itemY)
+    signal attachmentOpenRequested(string attachmentType, string localPath)
 
     width: listWidth
     height: messageLoader.height
@@ -68,19 +78,29 @@ Item {
         id: reasoningComponent
         Item {
             id: reasoningItem
-            property bool expanded: false
+            // 展开状态：用户手动选择优先，否则未完成时展开。
+            property bool userToggled: false
+            property bool userExpanded: false
+            readonly property bool expanded: userToggled ? userExpanded : !root.isComplete
             property int boundMessageIndex: root.messageIndex
             readonly property bool bodyVisible: expanded
+            // 展开后的最大高度。
+            readonly property real maxBodyHeight: 104
             implicitWidth: root.width
 
-            Component.onCompleted: expanded = !root.isComplete
-            onBoundMessageIndexChanged: expanded = !root.isComplete
+            onBoundMessageIndexChanged: {
+                // 复用到另一条消息时重置展开选择。
+                userToggled = false;
+                userExpanded = false;
+            }
             implicitHeight: reasoningPanel.height + 8
 
             Rectangle {
                 id: reasoningPanel
-                width: Math.min(root.listWidth - 16, Math.round(root.listWidth * 0.7))
-                height: 34 + (reasoningItem.bodyVisible ? 66 : 0)
+                width: Math.min(root.listWidth - 16, 400)
+                height: 34 + (reasoningItem.bodyVisible
+                              ? Math.min(reasoningItem.maxBodyHeight, reasoningText.implicitHeight + 16)
+                              : 0)
                 x: 8
                 radius: 6
                 color: "#17222D"
@@ -124,7 +144,7 @@ Item {
                         text: root.isComplete ? "推理过程" : "正在推理"
                         color: "#C1D0DC"
                         font.pixelSize: 12
-                        font.family: root.fontFamily || ""
+                        font.family: root.fontFamily || fontManager.fontFamily
                     }
 
                     Text {
@@ -134,12 +154,12 @@ Item {
                         text: root.isComplete ? (reasoningItem.expanded ? "收起" : "查看") : "实时"
                         color: "#6F8799"
                         font.pixelSize: 10
-                        font.family: root.fontFamily || ""
+                        font.family: root.fontFamily || fontManager.fontFamily
                     }
 
                     Canvas {
                         id: reasoningChevron
-                        visible: root.isComplete
+                        visible: root.isComplete || root.rawText.length > 0
                         anchors.right: parent.right
                         anchors.rightMargin: 10
                         anchors.verticalCenter: parent.verticalCenter
@@ -166,11 +186,14 @@ Item {
 
                     MouseArea {
                         anchors.fill: parent
-                        enabled: root.isComplete
-                        preventStealing: false
+                        // 有内容时也允许展开。
+                        enabled: root.isComplete || root.rawText.length > 0
+                        // 防止点击被 ListView 抢走。
+                        preventStealing: true
                         onClicked: {
                             root.toolCardExpansionStarted(!reasoningItem.expanded);
-                            reasoningItem.expanded = !reasoningItem.expanded;
+                            reasoningItem.userExpanded = !reasoningItem.expanded;
+                            reasoningItem.userToggled = true;
                         }
                     }
                 }
@@ -188,7 +211,7 @@ Item {
                         clip: true
                         contentWidth: width
                         contentHeight: reasoningText.implicitHeight
-                        interactive: root.isComplete && contentHeight > height
+                        interactive: (root.isComplete || root.rawText.length > 0) && contentHeight > height
                         boundsBehavior: Flickable.StopAtBounds
 
                         function followLatest() {
@@ -199,10 +222,11 @@ Item {
                         Text {
                             id: reasoningText
                             width: reasoningViewport.width
-                            text: root.rawText
+                            // 流式期间只排版尾部 1200 字。
+                            text: root.isComplete ? root.rawText : root.rawText.slice(-1200)
                             color: "#9EB1C0"
                             font.pixelSize: 11
-                            font.family: root.fontFamily || ""
+                            font.family: root.fontFamily || fontManager.fontFamily
                             wrapMode: Text.WrapAnywhere
                             lineHeight: 1.25
                             onImplicitHeightChanged: Qt.callLater(reasoningViewport.followLatest)
@@ -226,7 +250,7 @@ Item {
                 text: root.text
                 rawText: root.rawText
                 toolState: root.toolState
-                maxWidth: Math.min(root.listWidth - 16, Math.round(root.listWidth * 0.7))
+                maxWidth: Math.min(root.listWidth - 16, 300)
                 fontFamily: root.fontFamily
                 x: 8
                 anchors.verticalCenter: parent.verticalCenter
@@ -241,23 +265,38 @@ Item {
         id: simpleAssistantComponent
         Item {
             implicitWidth: root.width
-            implicitHeight: simpleBubble.height + 8
+            implicitHeight: simpleContent.height + 10
 
-            SimpleAssistantBubble {
-                id: simpleBubble
-                rawText: root.rawText
-                isComplete: root.isComplete
-                richText: root.renderMode === "basic"
-                maxWidth: Math.min(root.listWidth - 16, Math.round(root.listWidth * 0.7))
-                fontFamily: root.fontFamily
+            Column {
+                id: simpleContent
                 x: 8
-                anchors.verticalCenter: parent.verticalCenter
+                spacing: 8
 
-                MouseArea {
-                    anchors.fill: parent
-                    onPressAndHold: {
-                        var pos = mapToItem(null, mouseX, mouseY);
-                        root.longPressed(pos.x, pos.y, root.messageIndex);
+                AttachmentMessage {
+                    attachments: root.attachments
+                    fontFamily: root.fontFamily
+                    onOpenRequested: function (attachmentType, localPath) {
+                        root.attachmentOpenRequested(attachmentType, localPath);
+                    }
+                    onLongPressed: function (globalX, globalY) {
+                        root.longPressed(globalX, globalY, root.messageIndex);
+                    }
+                }
+
+                SimpleAssistantBubble {
+                    id: simpleBubble
+                    rawText: root.rawText
+                    isComplete: root.isComplete
+                    richText: root.renderMode === "basic"
+                    maxWidth: Math.min(root.listWidth - 16, 400)
+                    fontFamily: root.fontFamily
+
+                    MouseArea {
+                        anchors.fill: parent
+                        onPressAndHold: {
+                            var pos = mapToItem(null, mouseX, mouseY);
+                            root.longPressed(pos.x, pos.y, root.messageIndex);
+                        }
                     }
                 }
             }
@@ -267,8 +306,9 @@ Item {
     Component {
         id: assistantComponent
         Item {
+            id: assistantItem
             implicitWidth: root.width
-            implicitHeight: mixedBubble.implicitHeight + 26
+            implicitHeight: assistantContent.height + 10
             readonly property bool containsMath: root.rawText.indexOf("$") !== -1
                                                  || root.rawText.indexOf("\\(") !== -1
                                                  || root.rawText.indexOf("\\[") !== -1
@@ -278,16 +318,30 @@ Item {
                                                        && mixedBubble.renderReady && aiBubble.height > 0
                                                        && aiBubble.height <= 1024
 
+            Column {
+                id: assistantContent
+                x: 8
+                spacing: 8
+
+                AttachmentMessage {
+                    attachments: root.attachments
+                    fontFamily: root.fontFamily
+                    onOpenRequested: function (attachmentType, localPath) {
+                        root.attachmentOpenRequested(attachmentType, localPath);
+                    }
+                    onLongPressed: function (globalX, globalY) {
+                        root.longPressed(globalX, globalY, root.messageIndex);
+                    }
+                }
+
             Rectangle {
                 id: aiBubble
-                width: Math.min(root.listWidth - 16, Math.round(root.listWidth * 0.7))
+                width: Math.min(root.listWidth - 16, 400)
                 height: mixedBubble.implicitHeight + 18
-                x: 8
-                anchors.verticalCenter: parent.verticalCenter
                 radius: 16
                 color: "#182533"
                 clip: true
-                layer.enabled: parent.textureCacheActive
+                layer.enabled: assistantItem.textureCacheActive
                 layer.smooth: false
                 layer.mipmap: false
 
@@ -297,10 +351,11 @@ Item {
                     rawText: (root.reasoningText !== ""
                               ? "**推理过程**\n\n" + root.reasoningText + "\n\n**回答**\n\n" : "") + root.rawText
                     isComplete: root.isComplete
+                    streamTailOnly: !root.listScrolledUp
                     serverAvailable: root.mathServerAvailable
                     layoutBusy: root.listMoving || root.navigationJumping || !root.richContentNearViewport
                     parseDelay: 16 + Math.abs(root.messageIndex % 4) * 20
-                    maxWidth: Math.min(root.listWidth - 44, Math.round(root.listWidth * 0.65))
+                    maxWidth: Math.min(root.listWidth - 44, 372)
                     fontFamily: root.fontFamily
                     onRenderCommitStarted: root.richContentCommitStarted(root.y)
                 }
@@ -315,6 +370,7 @@ Item {
                     }
                 }
             }
+            }
         }
     }
 
@@ -322,20 +378,42 @@ Item {
         id: userComponent
         Item {
             implicitWidth: root.width
-            implicitHeight: chatBubble.height + 8
+            implicitHeight: userContent.height + 10
 
-            ChatBubble {
-                id: chatBubble
-                text: root.text
-                isUser: true
-                isComplete: root.isComplete
-                maxBubbleWidth: Math.min(root.listWidth * 0.85, Math.round(root.listWidth * 0.7))
-                containerWidth: root.listWidth
-                fontFamily: root.fontFamily
-                anchors.verticalCenter: parent.verticalCenter
-                onPressAndHold: {
-                    var pos = chatBubble.mapToItem(null, mouseX, mouseY);
-                    root.longPressed(pos.x, pos.y, root.messageIndex);
+            Column {
+                id: userContent
+                width: Math.max(attachmentStrip.implicitWidth, chatBubble.width)
+                anchors.right: parent.right
+                anchors.rightMargin: 8
+                spacing: 8
+
+                AttachmentMessage {
+                    id: attachmentStrip
+                    anchors.right: parent.right
+                    attachments: root.attachments
+                    fontFamily: root.fontFamily
+                    onOpenRequested: function (attachmentType, localPath) {
+                        root.attachmentOpenRequested(attachmentType, localPath);
+                    }
+                    onLongPressed: function (globalX, globalY) {
+                        root.longPressed(globalX, globalY, root.messageIndex);
+                    }
+                }
+
+                ChatBubble {
+                    id: chatBubble
+                    text: root.text
+                    visible: root.text !== ""
+                    isUser: true
+                    isComplete: root.isComplete
+                    maxBubbleWidth: Math.min(root.listWidth * 0.85, 400)
+                    containerWidth: root.listWidth
+                    fontFamily: root.fontFamily
+                    anchors.right: parent.right
+                    onPressAndHold: {
+                        var pos = chatBubble.mapToItem(null, mouseX, mouseY);
+                        root.longPressed(pos.x, pos.y, root.messageIndex);
+                    }
                 }
             }
         }

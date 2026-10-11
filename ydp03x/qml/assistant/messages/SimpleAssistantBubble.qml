@@ -7,10 +7,10 @@ Rectangle {
     property bool isComplete: false
     property bool richText: false
     property real maxWidth: 300
-    property var fontFamily
+    property var fontFamily: fontManager.fontFamily
 
     readonly property string renderedText: richText && isComplete && typeof chatbot !== "undefined"
-                                        && chatbot !== null ? chatbot.markdownToHtml(rawText) : rawText
+                                        && chatbot !== null ? chatbot.markdownToHtml(rawText, root.fontFamily || fontManager.fontFamily) : rawText
 
     width: Math.min(maxWidth, messageText.implicitWidth + 26)
     height: Math.max(messageText.implicitHeight + 18, 36)
@@ -32,7 +32,7 @@ Rectangle {
         wrapMode: Text.WrapAnywhere
         color: "#FFFFFF"
         font.pixelSize: 14
-        font.family: root.fontFamily || ""
+        font.family: root.fontFamily || fontManager.fontFamily
         lineHeight: 1.3
         linkColor: "#62A8EA"
     }

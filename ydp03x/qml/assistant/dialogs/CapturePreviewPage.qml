@@ -440,7 +440,7 @@ Item {
         Column {
             anchors.centerIn: parent
             spacing: 4
-            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "📷"; font.pixelSize: 18 }
+            Text { font.family: fontManager.fontFamily; anchors.horizontalCenter: parent.horizontalCenter; text: "📷"; font.pixelSize: 18 }
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: capturedImages.length > 0 ? "已抓取 " + capturedImages.length + " 页，请继续扫描..." : "请扫描以捕获图片..."
@@ -519,6 +519,7 @@ Item {
             }
         }
         Text {
+            font.family: fontManager.fontFamily
             anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom; bottomMargin: 4 }
             text: "处理中..."
             color: "white"; font.pixelSize: 11
@@ -543,16 +544,16 @@ Item {
 
         // 上
         Rectangle { x: parent.width / 2 - 8; y: 4; width: 16; height: 16; radius: 8; color: "#88000000"
-            Text { anchors.centerIn: parent; text: "▲"; color: "white"; font.pixelSize: 8 } }
+            Text { font.family: fontManager.fontFamily; anchors.centerIn: parent; text: "▲"; color: "white"; font.pixelSize: 8 } }
             // 下
             Rectangle { x: parent.width / 2 - 8; y: parent.height - 20; width: 16; height: 16; radius: 8; color: "#88000000"
-                Text { anchors.centerIn: parent; text: "▼"; color: "white"; font.pixelSize: 8 } }
+                Text { font.family: fontManager.fontFamily; anchors.centerIn: parent; text: "▼"; color: "white"; font.pixelSize: 8 } }
                 // 左
                 Rectangle { x: 4; y: parent.height / 2 - 8; width: 16; height: 16; radius: 8; color: "#88000000"
-                    Text { anchors.centerIn: parent; text: "◀"; color: "white"; font.pixelSize: 8 } }
+                    Text { font.family: fontManager.fontFamily; anchors.centerIn: parent; text: "◀"; color: "white"; font.pixelSize: 8 } }
                     // 右
                     Rectangle { x: parent.width - 20; y: parent.height / 2 - 8; width: 16; height: 16; radius: 8; color: "#88000000"
-                        Text { anchors.centerIn: parent; text: "▶"; color: "white"; font.pixelSize: 8 } }
+                        Text { font.family: fontManager.fontFamily; anchors.centerIn: parent; text: "▶"; color: "white"; font.pixelSize: 8 } }
     }
 
     // 左侧历史缩略图条 (使用 sourceSize 限制内存)
@@ -640,7 +641,7 @@ Item {
                 anchors.centerIn: parent; spacing: 12
                 Rectangle {
                     width: 32; height: 20; radius: 10; color: "#2B5278"
-                    Text { anchors.centerIn: parent; text: "−"; color: "white"; font.pixelSize: 13; font.bold: true }
+                    Text { font.family: fontManager.fontFamily; anchors.centerIn: parent; text: "−"; color: "white"; font.pixelSize: 13; font.bold: true }
                     MouseArea { anchors.fill: parent; onClicked: {
                         setZoom(zoomLevel - 0.25);
                     }}
@@ -648,7 +649,7 @@ Item {
                 Text { anchors.verticalCenter: parent.verticalCenter; text: Math.round(zoomLevel * 100) + "%"; color: "white"; font.pixelSize: 10; font.family: fontManager.fontFamilyZhCn }
                 Rectangle {
                     width: 32; height: 20; radius: 10; color: "#2B5278"
-                    Text { anchors.centerIn: parent; text: "+"; color: "white"; font.pixelSize: 13; font.bold: true }
+                    Text { font.family: fontManager.fontFamily; anchors.centerIn: parent; text: "+"; color: "white"; font.pixelSize: 13; font.bold: true }
                     MouseArea { anchors.fill: parent; onClicked: {
                         setZoom(zoomLevel + 0.25);
                     }}

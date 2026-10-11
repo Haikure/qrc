@@ -40,8 +40,8 @@ YBackButtonPage {
                 title: "最近一次 · " + root.rateText(chatbot.apiCacheStats.lastRate)
                 describe: root.tokenText(chatbot.apiCacheStats.lastCachedTokens,
                                          chatbot.apiCacheStats.lastInputTokens)
-                describeItem.width: width - 20
-                describeItem.font.pixelSize: 12
+                describeItem.width: width - 40
+                describeItem.font.pixelSize: 24
                 opacityChangableWhenPressed: false
             }
 
@@ -49,8 +49,8 @@ YBackButtonPage {
                 title: "本次运行累计 · " + root.rateText(chatbot.apiCacheStats.totalRate)
                 describe: root.tokenText(chatbot.apiCacheStats.totalCachedTokens,
                                          chatbot.apiCacheStats.totalInputTokens)
-                describeItem.width: width - 20
-                describeItem.font.pixelSize: 12
+                describeItem.width: width - 40
+                describeItem.font.pixelSize: 24
                 opacityChangableWhenPressed: false
             }
 

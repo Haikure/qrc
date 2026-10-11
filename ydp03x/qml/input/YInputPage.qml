@@ -25,6 +25,9 @@ YPage {
 
     // 打开时预填的文本（如文件重命名的原文件名），光标自动放到末尾
     property string initialText: ""
+    property bool secret: false
+    property bool allowEmpty: false
+    property bool closeOnAccept: true
 
     signal inputFinished(string text)
 
@@ -50,7 +53,6 @@ YPage {
         id: id_rime_backend
 
         onCommitText: {
-            console.log("Rime Commit: " + text + ", Current Raw Pinyin Len: " + currentPinyinLen);
 
             for (var i = 0; i < currentPinyinLen; i++) {
                 id_input_text_title_area.delChar();
@@ -83,6 +85,7 @@ YPage {
 
     // ---------- 输入逻辑 ----------
     function togglePinyinMode() {
+        if (secret) return;
         isPinyinMode = !isPinyinMode;
         id_rime_backend.clear();
         id_candidate_model.clear();
@@ -91,7 +94,6 @@ YPage {
     }
 
     function enterText(text) {
-        console.log("Input: " + text + ", PinyinMode: " + isPinyinMode);
 
         if (isPinyinMode) {
             var lowerText = text.toLowerCase();
@@ -135,6 +137,7 @@ YPage {
     }
 
     function newLine() {
+        if (secret) return;
         if (currentPinyinLen > 0) {
             id_rime_backend.clear();
             currentPinyinLen = 0;
@@ -156,10 +159,16 @@ YPage {
     }
 
     Component.onCompleted: {
-        if (visible && typeof keyBoard !== 'undefined' && keyBoard !== null) {
+        id_input_text_title_area.setInitialText(initialText);
+        if (visible) {
+            YInputProperty.inputPageShowing = true;
             keyBoard.inputPageShowing = true;
             keyBoard.autoSendScan = false;
         }
+    }
+    Component.onDestruction: {
+        YInputProperty.inputPageShowing = false;
+        keyBoard.inputPageShowing = false;
     }
 
     // ---------- 布局：整页纵向滚动 ----------
@@ -185,6 +194,8 @@ YPage {
             // ===== 上方多行输入编辑区（高度随内容增长）=====
             YInputTextTitleArea {
                 id: id_input_text_title_area
+                secret: id_input_page.secret
+                allowEmpty: id_input_page.allowEmpty
                 anchors.left: parent.left
                 anchors.right: parent.right
                 onBacked: {
@@ -196,8 +207,9 @@ YPage {
                         currentPinyinLen = 0;
                         id_candidate_model.clear();
                     }
+                    var closeAfter = closeOnAccept;
                     inputFinished(id_input_text_title_area.text);
-                    backButtonClicked();
+                    if (closeAfter) backButtonClicked();
                 }
             }
 
