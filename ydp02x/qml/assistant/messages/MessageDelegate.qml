@@ -186,8 +186,8 @@ Item {
                         anchors.fill: parent
                         // 有内容时也允许展开。
                         enabled: root.isComplete || root.rawText.length > 0
-                        // 防止点击被 ListView 抢走。
-                        preventStealing: true
+                        // 点击时切换展开状态；纵向拖动时允许 ListView 接管手势。
+                        preventStealing: false
                         onClicked: {
                             root.toolCardExpansionStarted(!reasoningItem.expanded);
                             reasoningItem.userExpanded = !reasoningItem.expanded;
