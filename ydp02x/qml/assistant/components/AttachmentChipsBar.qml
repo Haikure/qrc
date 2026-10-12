@@ -7,6 +7,11 @@ Rectangle {
     property var mediaModel: null
     property var fontFamily
 
+    // 只有"有预发送附件就允许空文字发送"的宿主才打开（聊天页预发送条、编辑页图片条），默认关闭。
+    // 验证：打开后右侧出现「发送」，点它不依赖输入框内容。
+    property bool showSendButton: false
+    signal sendRequested()
+
     function formatIcon(item, isMedia) {
         if (isMedia)
             return item && item.type === "input_audio"
@@ -27,7 +32,8 @@ Rectangle {
     border.color: "#2B3A4A"
 
     ListView {
-        anchors { fill: parent; margins: 4 }
+        // 有发送按钮时把列表右边界让出来，否则最后一个 chip 会被按钮盖住。
+        anchors { fill: parent; margins: 4; rightMargin: root.showSendButton ? sendButton.width + 12 : 4 }
         orientation: ListView.Horizontal
         spacing: 6
         clip: true
@@ -106,6 +112,38 @@ Rectangle {
                     }
                 }
             }
+        }
+    }
+
+    Rectangle {
+        id: sendButton
+        // 320x170 上没有空间再开一行：按钮与 chip 同高（26）、靠右对齐，44px 够放两个汉字。
+        // 验证：键盘关着时点它应能发出，键盘打开时整条随父项一起隐藏。
+        visible: root.showSendButton
+        width: visible ? 44 : 0
+        height: 26
+        radius: 6
+        color: sendArea.pressed ? "#3E7CB1" : "#2B5278"
+        border.width: 1
+        border.color: "#4A90D9"
+        anchors {
+            right: parent.right
+            rightMargin: 4
+            verticalCenter: parent.verticalCenter
+        }
+
+        Text {
+            anchors.centerIn: parent
+            text: "发送"
+            color: "#FFFFFF"
+            font.pixelSize: 11
+            font.family: root.fontFamily || ""
+        }
+
+        MouseArea {
+            id: sendArea
+            anchors.fill: parent
+            onClicked: root.sendRequested()
         }
     }
 }

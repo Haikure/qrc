@@ -10,6 +10,8 @@ Item {
     property real maxWidth: 300
     property var fontFamily
     property bool layoutBusy: false
+    // 用户正在翻看历史：此时公式为就位不再做高度动画，避免内容高度反复抖动。
+    property bool scrolledUp: false
     // 流式期间只渲染尾部文本。
     property bool streamTailOnly: false
     property int parseDelay: 16
@@ -31,6 +33,10 @@ Item {
     property string _parseRequestId: ""
     property bool _parsePending: false
     property bool _commitPending: false
+    // 当前 _blocks 是否来自 C++ 解析器（chatbot.parseMarkdownAsync / MessageLayoutCache）。
+    // 它保留下来但四个标志位全为 false 的片段，说明解析器已判定其中没有强调标记，
+    // 里面的 * _ 都是字面量，渲染时不能再按正则处理一遍（见 _markersResolved）。
+    property bool _nativeBlocks: false
     property string _renderSource: ""
     property bool _hasRenderSource: false
     readonly property real placeholderHeight: streamingText.implicitHeight
@@ -261,7 +267,7 @@ Item {
                 parseTimer.restart();
                 return;
             }
-            MessageLayoutCache.set(root.rawText, blocks);
+            MessageLayoutCache.set(root.rawText, blocks, true);
             root._blocks = blocks;
             root._visibleBlockCount = Math.min(3, blocks.length);
             if (blocks.length === 0)
@@ -375,7 +381,8 @@ Item {
                 property int renderGeneration: root._renderGeneration
                 property var blockData: root._blocks[index]
                 property int reportedGeneration: -1
-                width: root.maxWidth
+                // 不要给 Loader 设 width/height：Qt 会把加载项强制设成 Loader 的尺寸，
+                // 覆盖它自己算出来的宽度（块级组件都自己设了 width: root.maxWidth）。
                 active: index < root._visibleBlockCount
 
                 function reportLoaded() {
@@ -447,6 +454,7 @@ Item {
             display: true
             serverAvailable: root.serverAvailable
             maxWidth: root.maxWidth
+            animateHeight: !root.scrolledUp
             fontFamily: root.fontFamily
             onLayoutAboutToChange: root.renderCommitStarted()
         }
@@ -494,9 +502,10 @@ Item {
             Repeater {
                 model: mSegments
                 delegate: Loader {
+                    property real contentWidth: headingFlow.width
                     sourceComponent: modelData.type === "math" ? inlineMathComponent : headingTextComponent
                     onLoaded: {
-                        item.mContent = modelData.content;
+                        root._applySegment(item, modelData);
                         if (item.mLevel !== undefined)
                             item.mLevel = headingFlow.mLevel;
                     }
@@ -511,15 +520,21 @@ Item {
         Text {
             property string mContent: ""
             property int mLevel: 1
+            property bool mBold: false
+            property bool mItalic: false
+            property bool mCode: false
+            property bool mStrike: false
 
-            text: _renderMarkdownInline(mContent)
+            text: _renderInlineText(mContent, mCode, root._markersResolved(mBold, mItalic, mCode, mStrike))
             textFormat: Text.RichText
             width: Math.min(implicitWidth, root.maxWidth)
             wrapMode: Text.WrapAnywhere
-            color: "#FFFFFF"
+            color: mCode ? "#E8A0BF" : "#FFFFFF"
             font.pixelSize: _headingSize(mLevel)
             font.bold: true
-            font.family: root.fontFamily || ""
+            font.italic: mItalic
+            font.strikeout: mStrike
+            font.family: mCode ? "Consolas, monospace" : (root.fontFamily || "")
             lineHeight: 1.3
 
             function _headingSize(level) {
@@ -564,13 +579,16 @@ Item {
                         Repeater {
                             model: modelData
                             delegate: Loader {
+                                // 不要给 Loader 设 width：Qt 会把加载项强制缩放成 Loader 的宽度，
+                                // 行内公式会被撑满整行、被迫换行。宽度由内容自己决定。
                                 property real contentWidth: parent.width
-                                width: contentWidth
                                 sourceComponent: modelData.type === "math" ? inlineMathComponent : textComponent
                                 onLoaded: {
-                                    if (modelData.type !== "math")
+                                    if (modelData.type === "math")
+                                        item.maxWidth = Math.min(item.maxWidth, contentWidth);
+                                    else
                                         item.availableWidth = contentWidth;
-                                    item.mContent = modelData.content;
+                                    root._applySegment(item, modelData);
                                 }
                             }
                         }
@@ -586,26 +604,35 @@ Item {
         Row {
             property var mSegments: []
             width: root.maxWidth
-            spacing: 0
+            // Row 会接管子项的 x，左边距只能用 spacing 表达（写在子项上的 x 会被忽略）。
+            spacing: 8
 
             Rectangle {
                 width: 3
-                height: quoteCol.height
+                height: quoteFlow.implicitHeight
                 color: "#555555"
                 radius: 1
             }
 
-            Column {
-                id: quoteCol
-                width: parent.width - 10
-                leftPadding: 8
+            // 必须用 Flow 而不是 Column：引用块里文字与行内公式是同一段话的片段，
+            // 用 Column 会让每个片段各占一行（"例2的关键是先用" / 公式 / "与" / 公式 …）。
+            Flow {
+                id: quoteFlow
+                width: parent.width - 11
+                spacing: 4
 
                 Repeater {
                     model: parent.parent.mSegments
                     delegate: Loader {
-                        width: quoteCol.width - 8
+                        property real contentWidth: quoteFlow.width
                         sourceComponent: modelData.type === "math" ? inlineMathComponent : quoteTextComponent
-                        onLoaded: item.mContent = modelData.content
+                        onLoaded: {
+                            if (modelData.type === "math")
+                                item.maxWidth = Math.min(item.maxWidth, contentWidth);
+                            else if (item.availableWidth !== undefined)
+                                item.availableWidth = contentWidth;
+                            root._applySegment(item, modelData);
+                        }
                     }
                 }
             }
@@ -617,14 +644,23 @@ Item {
         id: quoteTextComponent
         Text {
             property string mContent: ""
-            text: _renderMarkdownInline(mContent)
+            property bool mBold: false
+            property bool mItalic: false
+            property bool mCode: false
+            property bool mStrike: false
+            // 与单元格同理：parent 是 Loader，宽度必须由引用块容器传入。
+            property real availableWidth: root.maxWidth
+
+            text: _renderInlineText(mContent, mCode, root._markersResolved(mBold, mItalic, mCode, mStrike))
             textFormat: Text.RichText
-            width: parent ? parent.width : root.maxWidth
+            width: Math.min(implicitWidth, availableWidth)
             wrapMode: Text.WrapAnywhere
-            color: "#AAAAAA"
+            color: mCode ? "#E8A0BF" : "#AAAAAA"
             font.pixelSize: 14
-            font.family: root.fontFamily || ""
-            font.italic: true
+            font.family: mCode ? "Consolas, monospace" : (root.fontFamily || "")
+            font.bold: mBold
+            font.italic: !mCode
+            font.strikeout: mStrike
             lineHeight: 1.3
         }
     }
@@ -639,58 +675,151 @@ Item {
         }
     }
 
-    // 【G】表格
+    // 【G】表格：320px 宽的屏幕放不下多列并排
+    //   一律按「每条记录一行一个字段」渲染：字段名（表头）作为浅色标签跟在内容前面，
+    //   内容用满整行宽度。分成几列时每格只剩几十像素，公式会被整体压小、文字被挤成
+    //   一词一行 —— 屏幕太小，列式表格在这里没有可读性。
+    //   空单元格不生成委托；整张表全空时不渲染；行位置在 JS 里累加（定位器在这种嵌套
+    //   层次里不会重算隐式尺寸）。
     Component {
         id: tableComponent
         Rectangle {
+            id: tableRoot
+
             property var mHeaders: []
             property var mRows: []
+            property var mTableRows: []
+
+            readonly property bool empty: mTableRows.length === 0
+
+            function _rebuildRows() {
+                var rows = [];
+                var headerCells = _packCells(mHeaders, false);
+                if (headerCells.length > 0)
+                    rows.push({"header": true, "stripe": false, "cells": headerCells});
+                for (var r = 0; r < mRows.length; r++) {
+                    var packed = _packCells(mRows[r] || []);
+                    if (packed.length > 0)
+                        rows.push({"header": false, "stripe": r % 2 === 0, "cells": packed});
+                }
+                mTableRows = rows;
+                Qt.callLater(_relayoutLater);
+            }
+
+            function _relayoutLater() {
+                tableColumn.relayout();
+            }
+
+            // 单元格 → { segments }，空单元格剔除；表头文字作为 label 片段拼在内容前面
+            function _packCells(source, withLabel) {
+                var packed = [];
+                for (var c = 0; c < source.length; c++) {
+                    if (root._cellText(source[c]).length === 0)
+                        continue;
+                    var segments = root._cellSegments(source[c]).slice();
+                    var label = (withLabel !== false && mHeaders.length > 1)
+                            ? root._cellText(mHeaders[c] || "") : "";
+                    if (label.length > 0)
+                        segments.unshift({"type": "label", "content": label});
+                    packed.push({"column": c, "segments": segments});
+                }
+                return packed;
+            }
 
             width: root.maxWidth
-            height: tableText.implicitHeight + 10
+            // 不能用 visible 隐藏空表：不可见的子树不会走布局，内部高度会一直停在 0，
+            // 之后即使有了内容也长不回来。空表用 0 高度 + 无底无边表示。
+            height: empty ? 0 : tableColumn.contentHeight + 10
             radius: 4
-            color: "#1A1A1A"
+            color: empty ? "transparent" : "#1A1A1A"
             border.color: "#333333"
-            border.width: 1
+            border.width: empty ? 0 : 1
 
-            Text {
-                id: tableText
-                anchors.fill: parent
-                anchors.margins: 4
-                text: _tableHtml()
-                textFormat: Text.RichText
-                wrapMode: Text.WrapAnywhere
-                color: "#DDDDDD"
-                font.pixelSize: 11
-                font.family: root.fontFamily || ""
-                lineHeight: 1.2
+            Component.onCompleted: _rebuildRows()
+            onMHeadersChanged: _rebuildRows()
+            onMRowsChanged: _rebuildRows()
 
-                function _tableHtml() {
-                    var html = '<table border="0" cellpadding="3" cellspacing="0" width="100%">';
-                    html += '<tr bgcolor="#2A2A2A">';
-                    for (var h = 0; h < mHeaders.length; h++) {
-                        html += '<td><font color="#FFFFFF"><b>' + _cellHtml(mHeaders[h]) + '</b></font></td>';
+            Item {
+                id: tableColumn
+                x: 5
+                y: 5
+                width: root.maxWidth - 14
+
+                property real contentHeight: 0
+                function relayout() {
+                    var used = 0;
+                    var count = 0;
+                    for (var r = 0; r < rowsRepeater.count; r++) {
+                        var item = rowsRepeater.itemAt(r);
+                        if (!item)
+                            continue;
+                        item.y = used;
+                        used += item.implicitHeight + 7;
+                        count++;
                     }
-                    html += '</tr>';
-                    for (var r = 0; r < mRows.length; r++) {
-                        var bg = (r % 2 === 0) ? '#1E1E1E' : '#222222';
-                        html += '<tr bgcolor="' + bg + '">';
-                        for (var c = 0; c < mRows[r].length; c++) {
-                            html += '<td><font color="#DDDDDD">' + _cellHtml(mRows[r][c]) + '</font></td>';
-                        }
-                        html += '</tr>';
-                    }
-                    html += '</table>';
-                    return html;
+                    contentHeight = count > 0 ? Math.max(0, used - 7) : 0;
                 }
 
-                function _cellHtml(raw) {
-                    if (!raw) return "";
-                    return root._renderMarkdownInline(raw);
+                Repeater {
+                    id: rowsRepeater
+                    model: tableRoot.mTableRows.length
+
+                    delegate: Column {
+                        id: recordRow
+                        property var mRow: tableRoot.mTableRows[index] || ({})
+                        width: tableColumn.width
+                        spacing: 3
+                        onImplicitHeightChanged: tableColumn.relayout()
+
+                        Rectangle {
+                            // 用高度而不是 visible：定位器不会因为子项 visible 变化重算隐式尺寸
+                            width: parent.width
+                            height: recordRow.mRow.header === true
+                                    ? 0
+                                    : (recordRow.mRow.stripe === true ? 1 : 0)
+                            color: "#2A2A2A"
+                        }
+
+                        Repeater {
+                            model: (recordRow.mRow.cells || []).length
+
+                            delegate: Flow {
+                                id: recordField
+                                property var cellData: (recordRow.mRow.cells || [])[index] || ({})
+                                width: tableColumn.width
+                                spacing: 3
+
+                                Repeater {
+                                    model: recordField.cellData.segments || []
+
+                                    delegate: Loader {
+                                        // 单元格文字宽度必须由容器传进去：Loader 的宽度跟随 item 的
+                                        // 隐式宽度（item 又读 parent.width），读到的是 0，中文会一个字
+                                        // 一行竖着堆起来。contentWidth 就是本 Flow 的实际宽度。
+                                        property real contentWidth: recordField.width
+                                        property bool forceBold: recordRow.mRow.header === true
+                                        sourceComponent: modelData.type === "math" ? inlineMathComponent
+                                                     : (modelData.type === "label" ? labelTextComponent
+                                                                                   : cellTextComponent)
+                                        onLoaded: {
+                                            if (modelData.type === "math")
+                                                item.maxWidth = Math.min(item.maxWidth, contentWidth);
+                                            else if (item.availableWidth !== undefined)
+                                                item.availableWidth = contentWidth;
+                                            root._applySegment(item, modelData);
+                                            if (forceBold && item.mBold !== undefined)
+                                                item.mBold = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
     }
+
 
     // 【2】普通段落
     Component {
@@ -706,9 +835,11 @@ Item {
                     property real contentWidth: root.maxWidth
                     sourceComponent: modelData.type === "math" ? inlineMathComponent : textComponent
                     onLoaded: {
-                        if (modelData.type !== "math")
+                        if (modelData.type === "math")
+                            item.maxWidth = Math.min(item.maxWidth, contentWidth);
+                        else
                             item.availableWidth = contentWidth;
-                        item.mContent = modelData.content;
+                        root._applySegment(item, modelData);
                     }
                 }
             }
@@ -721,9 +852,11 @@ Item {
         MathBubble {
             property string mContent: ""
             latex: mContent
-            display: false
+            display: mDisplay
+            property bool mDisplay: false
             serverAvailable: root.serverAvailable
             maxWidth: root.maxWidth
+            animateHeight: !root.scrolledUp
             fontFamily: root.fontFamily
             onLayoutAboutToChange: root.renderCommitStarted()
         }
@@ -735,45 +868,163 @@ Item {
         Text {
             property string mContent: ""
             property real availableWidth: root.maxWidth
-            text: _renderMarkdownInline(mContent)
+            property bool mBold: false
+            property bool mItalic: false
+            property bool mCode: false
+            property bool mStrike: false
+
+            text: _renderInlineText(mContent, mCode, root._markersResolved(mBold, mItalic, mCode, mStrike))
             textFormat: Text.RichText
             width: Math.min(implicitWidth, availableWidth)
             wrapMode: Text.WrapAnywhere
-            color: "#FFFFFF"
-            font.pixelSize: 14
-            font.family: root.fontFamily || ""
+            color: mCode ? "#E8A0BF" : "#FFFFFF"
+            font.pixelSize: mCode ? 12 : 14
+            font.family: mCode ? "Consolas, monospace" : (root.fontFamily || "")
+            font.bold: mBold
+            font.italic: mItalic
+            font.strikeout: mStrike
             lineHeight: 1.3
             linkColor: "#62A8EA"
             verticalAlignment: Text.AlignVCenter
         }
     }
 
+    // 【2.3】表格里的表头标签（跟内容同一行，内容因此能用满整行宽度）
+    Component {
+        id: labelTextComponent
+        Text {
+            property string mContent: ""
+            // 由承载它的 Flow 通过 Loader.onLoaded 传入；表头很长时按容器宽度换行而不是溢出。
+            property real availableWidth: root.maxWidth
+            text: mContent + "："
+            color: "#9FB2C4"
+            font.pixelSize: 11
+            font.family: root.fontFamily || ""
+            wrapMode: Text.WrapAnywhere
+            width: Math.min(implicitWidth, availableWidth)
+        }
+    }
+
+    // 【2.3.1】表格单元格文字
+    Component {
+        id: cellTextComponent
+        Text {
+            property string mContent: ""
+            property bool mBold: false
+            property bool mItalic: false
+            property bool mCode: false
+            property bool mStrike: false
+            // 和 textComponent 一样由容器（单元格 Flow）传入可用宽度。这里不能读
+            // parent.width：parent 是 Loader，Loader 的宽度又跟随本项，创建时算成 0。
+            property real availableWidth: root.maxWidth
+
+            text: _renderInlineText(mContent, mCode, root._markersResolved(mBold, mItalic, mCode, mStrike))
+            textFormat: Text.RichText
+            width: Math.min(implicitWidth, availableWidth)
+            wrapMode: Text.WrapAnywhere
+            color: mCode ? "#E8A0BF" : (mBold ? "#FFFFFF" : "#DDDDDD")
+            font.pixelSize: mCode ? 10 : 11
+            font.family: mCode ? "Consolas, monospace" : (root.fontFamily || "")
+            font.bold: mBold
+            font.italic: mItalic
+            font.strikeout: mStrike
+            lineHeight: 1.2
+        }
+    }
+
     // ── 行内 Markdown 渲染 ──
-    function _renderMarkdownInline(raw) {
+    // 解析器（chatbot.parseMarkdownAsync）会把粗体/斜体/行内代码转成片段标志位，
+    // 这类片段的标记已被消费，不能再按正则处理一遍，否则 `**$x$**` 会残留 `**`。
+    // 注意「四个标志位全是 false」不等于「没有解析过」：C++ 解析器只在标志为真时才
+    // 输出该字段，正文里的字面量 `*`/`_`（`2 * 3 * 4`、`snake_case_name`、`\*`）同样
+    // 是这种片段。按正则再处理一遍会把这些字面量吃成斜体（实测 “2 * 3 * 4” 渲染成
+    // “2 3 4”）—— 所以判据是「片段来自哪个解析器」，_nativeBlocks 由 _parse 写入。
+    function _markersResolved(bold, italic, code, strike) {
+        return _nativeBlocks || bold === true || italic === true || code === true || strike === true;
+    }
+
+    function _escapeHtml(raw) {
+        return raw.replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    function _renderInlineText(raw, isCode, markersResolved) {
+        if (!raw || raw.length === 0)
+            return "";
+        if (isCode)
+            return '<code style="background:#3a3a3a;padding:1px 4px;border-radius:3px;font-family:Consolas,monospace;font-size:12px;color:#E8A0BF">'
+                    + _escapeHtml(raw) + '</code>';
+        return _renderMarkdownInline(raw, markersResolved === true);
+    }
+
+    // 把解析器给出的片段标志写进委托。
+    function _applySegment(item, segment) {
+        if (!item || !segment)
+            return;
+        if (segment.type === "math") {
+            if (item.mDisplay !== undefined)
+                item.mDisplay = segment.display === true;
+            item.mContent = segment.content;
+            return;
+        }
+        item.mContent = segment.content;
+        if (item.mBold !== undefined)
+            item.mBold = segment.bold === true;
+        if (item.mItalic !== undefined)
+            item.mItalic = segment.italic === true;
+        if (item.mCode !== undefined)
+            item.mCode = segment.code === true;
+        if (item.mStrike !== undefined)
+            item.mStrike = segment.strike === true;
+    }
+
+    // 单元格纯文本（判断是否空单元格、以及表头标签）
+    function _cellText(cell) {
+        var segments = _cellSegments(cell);
+        var text = "";
+        for (var i = 0; i < segments.length; i++)
+            text += segments[i].content || "";
+        return text.trim();
+    }
+
+    // 兼容旧解析路径（无 chatbot 时的 JS 解析器）给出的纯字符串单元格。
+    function _cellSegments(cell) {
+        if (cell === undefined || cell === null)
+            return [];
+        if (typeof cell === "string")
+            return cell.length > 0 ? [{
+                "type": "text",
+                "content": cell
+            }] : [];
+        return cell;
+    }
+
+    function _renderMarkdownInline(raw, emphasisResolved) {
         if (!raw || raw.length === 0)
             return "";
 
-        var t = raw;
-
-        t = t.replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
+        var t = _escapeHtml(raw);
 
         var codeSpans = [];
-        t = t.replace(/`([^`\n]+?)`/g, function(match, code) {
-            var ph = "\x00C" + codeSpans.length + "\x00";
-            codeSpans.push('<code style="background:#3a3a3a;padding:1px 4px;border-radius:3px;font-family:Consolas,monospace;font-size:12px;color:#E8A0BF">' + code + '</code>');
-            return ph;
-        });
+        if (!emphasisResolved) {
+            t = t.replace(/`([^`\n]+?)`/g, function (match, code) {
+                var ph = "\x00C" + codeSpans.length + "\x00";
+                codeSpans.push('<code style="background:#3a3a3a;padding:1px 4px;border-radius:3px;font-family:Consolas,monospace;font-size:12px;color:#E8A0BF">' + code + '</code>');
+                return ph;
+            });
+        }
 
         t = t.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<a href="$2" style="color:#62A8EA">[$1]</a>');
         t = t.replace(/\[([^\]]+?)\]\(([^)]+?)\)/g, '<a href="$2" style="color:#62A8EA;text-decoration:none">$1</a>');
-        t = t.replace(/\*\*\*(.+?)\*\*\*/g, '<b><i>$1</i></b>');
-        t = t.replace(/___(.+?)___/g, '<b><i>$1</i></b>');
-        t = t.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
-        t = t.replace(/__(.+?)__/g, '<b>$1</b>');
-        t = t.replace(/\*(.+?)\*/g, '<i>$1</i>');
-        t = t.replace(/_(.+?)_/g, '<i>$1</i>');
+        if (!emphasisResolved) {
+            t = t.replace(/\*\*\*(.+?)\*\*\*/g, '<b><i>$1</i></b>');
+            t = t.replace(/___(.+?)___/g, '<b><i>$1</i></b>');
+            t = t.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+            t = t.replace(/__(.+?)__/g, '<b>$1</b>');
+            t = t.replace(/\*(.+?)\*/g, '<i>$1</i>');
+            t = t.replace(/_(.+?)_/g, '<i>$1</i>');
+        }
         t = t.replace(/~~(.+?)~~/g, '<s>$1</s>');
         t = t.replace(/==(.+?)==/g, '<span style="background:#FFFF0033">$1</span>');
 
@@ -824,6 +1075,8 @@ Item {
             _fastHtml = "";
             var asyncCached = MessageLayoutCache.get(text);
             if (asyncCached !== null) {
+                // 缓存里的块可能来自 JS 兜底解析器，来源要跟着缓存一起取回来。
+                _nativeBlocks = MessageLayoutCache.getNative(text);
                 _blocks = asyncCached;
                 _visibleBlockCount = Math.min(3, asyncCached.length);
                 if (asyncCached.length === 0)
@@ -832,6 +1085,8 @@ Item {
                     blockBatchTimer.restart();
                 return;
             }
+            // 交给 C++ 解析器，产出带强调标志位的块。
+            _nativeBlocks = true;
             _parseRequestId = String(_renderGeneration) + ":" + String(Date.now()) + ":" + String(Math.random());
             chatbot.parseMarkdownAsync(text, _parseRequestId);
             return;
@@ -849,6 +1104,8 @@ Item {
         _fastHtml = "";
         var cached = MessageLayoutCache.get(text);
         if (cached !== null) {
+            // 同上：缓存可能来自 JS 兜底解析器，来源要一起取回来。
+            _nativeBlocks = MessageLayoutCache.getNative(text);
             _blocks = cached;
             _visibleBlockCount = Math.min(3, cached.length);
             if (cached.length === 0)
@@ -858,6 +1115,8 @@ Item {
             return;
         }
 
+        // 下面这段 JS 解析器只输出 {type, content}，没有强调标志位，必须靠正则兜底。
+        _nativeBlocks = false;
         var blocks = [];
         var currentSegments = [];
         var i = 0;
@@ -1116,7 +1375,7 @@ Item {
 
         if (generation !== _renderGeneration)
             return;
-        MessageLayoutCache.set(text, blocks);
+        MessageLayoutCache.set(text, blocks, false);
         _blocks = blocks;
         _visibleBlockCount = Math.min(3, blocks.length);
         if (blocks.length === 0)

@@ -75,6 +75,10 @@ Item {
             }
     }
 
+    // 由 main.qml 的 onOcrStart 在调用 close() 前置位、close() 消费后复位。
+    // 判据只认扫描：Home 键/进设置/跟读返回也走 close()，那些场合要保持厂商的暂停行为。
+    property bool closingForScan: false
+
     function close() {
         console.warn("YAudioPlayer.qml===close()")
         cleanupInternal()
@@ -91,11 +95,15 @@ Item {
         } else if (YEnum.STOPPED === mediaPlayerManager.playState) {
             // 播放已停止 → 释放音频引用
             musicPlayer.releaseAudio()
+        } else if (closingForScan && !musicPlayer.pauseOnScan) {
+            // 厂商 close() 只对 PM_AudioPlayer 模式放行，其它模式一律暂停：扫描触发的关闭在开关关闭时
+            // 不暂停、也不释放音频引用（引用一放，AudioDaemon 3s 后就会关掉音频设备）。
         } else {
             // 其他模式暂停 → 释放音频引用
             mediaPlayerManager.onClickedPause()
             musicPlayer.releaseAudio()
         }
+        closingForScan = false
         id_ver_play_bar.setFollowEnabledState(false)
         raise()
     }

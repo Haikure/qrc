@@ -1285,13 +1285,15 @@ YBackButtonPage {
             }
         } else {
             qmlGlobal.canAutoAddToWb = false
+            // 关掉「扫描时自动暂停播放」时后台音乐还在播，soundCenter.stop()/forceStop() 会把它一起掐掉。
+            const preserveMusic = musicPlayer.shouldPreserveMusicOnScanResultClose()
             if (closingScanResult) {
-                if (!musicPlayer.shouldPreserveMusicOnScanResultClose()) {
+                if (!preserveMusic) {
                     soundCenter.stop()
                 }
                 musicPlayer.finishScanPause()
                 closingScanResult = false
-            } else {
+            } else if (!preserveMusic) {
                 soundCenter.stop()
             }
         }

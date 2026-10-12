@@ -84,6 +84,16 @@ YBackButtonAudioPage {
         showButtons();
     }
 
+    // 逆时针 90°：加 270 % 360 等价于减 90，且结果始终落在 [0, 360)。
+    function rotateImageCounterClockwise() {
+        isAnimating = false;
+        rotationAngle = (rotationAngle + 270) % 360;
+        offsetX = 0;
+        offsetY = 0;
+        updateImageDisplay();
+        showButtons();
+    }
+
     function resetView() {
         enableAnimation();
         rotationAngle = 0;
@@ -456,8 +466,9 @@ YBackButtonAudioPage {
             ImageViewButton {
                 text: "↺"
                 fontSize: 18
-                onClicked: root.resetView()
+                onClicked: root.rotateImageCounterClockwise()
             }
+
         }
     }
 

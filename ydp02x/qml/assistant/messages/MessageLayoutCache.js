@@ -22,7 +22,7 @@ function _entry(text, create) {
     if (entry && entry.source !== text)
         entry = null;
     if (!entry && create) {
-        entry = { "source": text, "blocks": null, "html": null, "heights": {} };
+        entry = { "source": text, "blocks": null, "native": false, "html": null, "heights": {} };
         _store[key] = entry;
         _order.push(key);
         _totalChars += text.length;
@@ -52,10 +52,20 @@ function get(text) {
     return entry ? entry.blocks : null;
 }
 
-function set(text, blocks) {
+// 块是哪个解析器产出的：C++ (chatbot.parseMarkdownAsync，带强调标志位) 还是页面里的 JS
+// 兜底解析器（只有 {type, content}，必须靠正则再解析一遍标记）。两者共用同一份缓存，
+// 命中时必须连着来源一起取，否则会把字面量 **粗体** 当成已解析的标志位。
+function getNative(text) {
+    var entry = _entry(text, false);
+    return entry ? entry.native === true : false;
+}
+
+function set(text, blocks, native) {
     var entry = _entry(text, true);
-    if (entry)
+    if (entry) {
         entry.blocks = blocks;
+        entry.native = native === true;
+    }
 }
 
 function getHtml(text) {

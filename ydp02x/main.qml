@@ -159,6 +159,9 @@ YMainWindow {
                 return;
             }
             closeTipDialog();
+            // 告诉播放页"这次关闭是扫描引起的"：只有扫描置该标记，其它 close() 调用点保持厂商暂停行为。
+            if (id_audio_player_loader.item)
+                id_audio_player_loader.item.closingForScan = true;
             closeAudioPlayer();
             closeQuickSetting();
             speechManager.setEnable(false);

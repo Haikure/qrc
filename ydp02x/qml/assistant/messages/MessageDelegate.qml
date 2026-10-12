@@ -352,6 +352,7 @@ Item {
                     streamTailOnly: !root.listScrolledUp
                     serverAvailable: root.mathServerAvailable
                     layoutBusy: root.listMoving || root.navigationJumping || !root.richContentNearViewport
+                    scrolledUp: root.listScrolledUp
                     parseDelay: 16 + Math.abs(root.messageIndex % 4) * 20
                     maxWidth: Math.min(root.listWidth - 44, 372)
                     fontFamily: root.fontFamily

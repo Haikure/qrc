@@ -2,6 +2,8 @@ import QtQuick 2.12
 import com.youdao.pen 1.0
 import "./commons"
 import "./commons/input"
+// 编辑态图片条复用聊天页的附件条组件（该目录只有这一个组件，不用到就不建对象）。
+import "./assistant/components"
 
 import com.youdao.input 1.0
 
@@ -12,6 +14,13 @@ YPage {
 
     readonly property int bottomMargin: isPinyinMode && id_candidate_view.visible ? 32 : 12
     property alias placeHolderText: id_input_text_title_area.placeHolderText
+
+    // 透传 title area 的"空文本可确认"开关，见 YInputTextTitleArea.qml 的注释。
+    property alias allowEmptyAccept: id_input_text_title_area.allowEmptyAccept
+
+    // 编辑消息时回填的原图片（ListModel；null = 普通输入，不显示图片条）。
+    // 条目清空时条高归零，故词典/设置页等没有编辑图片的用法不占高度。
+    property var attachmentModel: null
 
     property bool isPinyinMode: false
 
@@ -99,6 +108,8 @@ YPage {
     }
 
     function resetInput(text) {
+        // 输入页是复用实例：滚动位置必须一起复位，否则再次打开会停在上一轮的位置。
+        id_input_flickable.contentY = 0;
         isPinyinMode = false;
         id_rime_backend.clear();
         id_candidate_model.clear();
@@ -141,13 +152,15 @@ YPage {
     }
 
     Flickable {
+        id: id_input_flickable
+
         anchors.fill: parent
         anchors.leftMargin: 10
         anchors.rightMargin: 10
 
         contentWidth: width
 
-        contentHeight: id_top_spacer.height + id_input_text_function_group.height + (id_input_page.currentKeyboardItem ? id_input_page.currentKeyboardItem.height : 0) + bottomMargin + id_input_text_title_area.height + (id_candidate_view.visible ? id_candidate_view.height : 0) + 3 + 5 + (id_candidate_view.visible ? 8 : 0)
+        contentHeight: id_top_spacer.height + id_input_text_function_group.height + (id_input_page.currentKeyboardItem ? id_input_page.currentKeyboardItem.height : 0) + bottomMargin + id_input_text_title_area.height + (id_candidate_view.visible ? id_candidate_view.height : 0) + (id_attachment_strip.visible ? id_attachment_strip.height + 8 : 0) + 3 + 5 + (id_candidate_view.visible ? 8 : 0)
 
         clip: true
         pressDelay: 100
@@ -281,9 +294,30 @@ YPage {
             }
         }
 
+        // 编辑消息时的原图片条，夹在标题框（或拼音候选区）与功能键组之间。
+        // 复用 AttachmentChipsBar：外观与 × 命中区（30x30）和聊天页一致；不显示时条高归零，不挤功能键。
+        AttachmentChipsBar {
+            id: id_attachment_strip
+            visible: attachmentModel !== null && attachmentModel.count > 0
+            height: visible ? 34 : 0
+            filesModel: null
+            mediaModel: attachmentModel
+            fontFamily: qmlGlobal.fontFamilyZhCn
+
+            anchors {
+                left: parent.left
+                right: parent.right
+                top: id_candidate_view.visible ? id_candidate_view.bottom : id_input_text_title_area.bottom
+                topMargin: 8
+            }
+        }
+
         YInputTextFunctionGroup {
             id: id_input_text_function_group
-            anchors.top: id_candidate_view.visible ? id_candidate_view.bottom : id_input_text_title_area.bottom
+            // 图片条出现时整组功能键跟着下移；不出现时仍锚在候选区/标题框上。
+            anchors.top: id_attachment_strip.visible
+                         ? id_attachment_strip.bottom
+                         : (id_candidate_view.visible ? id_candidate_view.bottom : id_input_text_title_area.bottom)
             anchors.topMargin: 3
             anchors.left: parent.left
             anchors.right: parent.right

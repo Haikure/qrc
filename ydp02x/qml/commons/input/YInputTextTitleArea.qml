@@ -9,7 +9,10 @@ Item {
     anchors.right: parent.right
     height: Math.max(id_input_core_background.contentHeight, 70)
 
-    readonly property bool acceptabled: id_input_core.length
+    readonly property bool acceptabled: id_input_core.length > 0 || allowEmptyAccept
+    // 允许"空文字确认"：只发图片/附件时输入框是空的，此时 ✓ 必须可点；默认 false，查词/改配置不变。
+    // 验证：打开后空输入框的 ✓ 不再 0.6 透明，可点并触发 accepted()。
+    property bool allowEmptyAccept: false
     property alias text: id_input_core.text
     property alias placeHolderText: id_placeholder_text.text
 

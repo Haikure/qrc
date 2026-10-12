@@ -21,6 +21,11 @@ YPage {
     property string messageContent: ""
     property bool isSearchEnabled: false
     property bool mathServerAvailable: false
+    // 服务端是否支持"统一字号 + 长公式换行"（旧版只弹一次提示，不改变其它行为）
+    property bool mathServerModern: false
+    property bool _mathServerWarned: false
+    // 服务端渲染器缺中文字体（/health 的 cjkFont === false）只提示一次
+    property bool _mathServerFontWarned: false
     property bool bubbleTextureCacheEnabled: true
     property var keyboardPageRef: null
     property var _keyboardComponent: null
@@ -32,6 +37,10 @@ YPage {
     property bool _preparingSend: false
     property bool _toolCallActive: false
     property int _attachmentReadSeq: 0
+    // 内嵌图片要等后端落盘才有 localPath，而视觉代理是异步落库的，所以记下发出去那一行，
+    // 等 messagesChanged 时按历史把路径补回来（-1 = 没有待补的行）。
+    property int _pendingAttachmentRow: -1
+    property string _pendingAttachmentText: ""
     property int _pendingJumpIndex: -1
     property int _navigationTargetIndex: -1
     property bool _navigationJumping: false
@@ -55,17 +64,22 @@ YPage {
         if (id_rich_content_anchor_timer.running)
             return;
 
+        // 用户正在往回翻历史：钉住阅读位置，不做任何贴底。
+        if (id_chat_listview.userScrolledUp) {
+            id_chat_listview.captureReadAnchor();
+            id_read_anchor_timer.hold();
+            return;
+        }
+
         var distanceToBottom = id_chat_listview.contentHeight - id_chat_listview.contentY - id_chat_listview.height;
-        if (!id_chat_listview.userScrolledUp && distanceToBottom <= id_chat_listview.bottomThreshold) {
+        if (distanceToBottom <= id_chat_listview.bottomThreshold) {
             id_rich_content_anchor_timer.pinBottom = true;
             id_rich_content_anchor_timer.anchorIndex = -1;
             id_rich_content_anchor_timer.beginTracking();
             return;
         }
 
-        var anchorIndex = id_chat_listview.indexAt(4, id_chat_listview.contentY + 1);
-        if (anchorIndex < 0)
-            anchorIndex = id_chat_listview.indexAt(id_chat_listview.width / 2, id_chat_listview.contentY + 1);
+        var anchorIndex = id_chat_listview.probeViewportIndex();
         if (anchorIndex < 0)
             return;
         var anchorItem = id_chat_listview.itemAtIndex(anchorIndex);
@@ -131,13 +145,41 @@ YPage {
                 return;
             var xhr = new XMLHttpRequest();
             _mathProbeRequest = xhr;
-            xhr.open("GET", "http://127.0.0.1:3000/", true);
+            xhr.open("GET", "http://127.0.0.1:3000/health", true);
             xhr.timeout = 2000;
             xhr.onreadystatechange = function () {
-                if (xhr.readyState === XMLHttpRequest.DONE && _mathProbeRequest === xhr) {
-                    _mathProbeRequest = null;
-                    id_chat_assistant_page.mathServerAvailable = (xhr.status > 0);
+                if (xhr.readyState !== XMLHttpRequest.DONE || _mathProbeRequest !== xhr)
+                    return;
+                _mathProbeRequest = null;
+                id_chat_assistant_page.mathServerAvailable = (xhr.status > 0);
+                if (!id_chat_assistant_page.mathServerAvailable)
+                    return;
+                // /health 由本项目服务端提供 renderer/cjkFont；不是本项目的服务端（status 非 ok）不提示。
+                var health = null;
+                try {
+                    health = JSON.parse(xhr.responseText);
+                } catch (e) {
+                    health = null;
                 }
+                if (!health || health.status !== "ok")
+                    return;
+                id_chat_assistant_page.mathServerModern = (health.renderer || 1) >= 2;
+                // 探测会在页面重新可见时重启，靠标志位保证每个问题只提示一次；
+                // 两个问题合并成一条文案，避免两次 toast 互相覆盖。
+                var problems = [];
+                if (!id_chat_assistant_page.mathServerModern && !id_chat_assistant_page._mathServerWarned) {
+                    id_chat_assistant_page._mathServerWarned = true;
+                    problems.push("公式服务版本过旧：公式大小不会统一、长公式不会换行");
+                }
+                // 只有服务端明确给出 false 才算缺字体；字段缺失（旧服务端）不提示。
+                if (health.cjkFont === false && !id_chat_assistant_page._mathServerFontWarned) {
+                    id_chat_assistant_page._mathServerFontWarned = true;
+                    problems.push("公式服务缺少中文字体：公式里的中文会显示不出来");
+                }
+                if (problems.length === 1)
+                    toastBanner.warning(problems[0] + "，建议更新 mathjax-server", 8000);
+                else if (problems.length > 1)
+                    toastBanner.warning(problems.join("；") + "，请更新 mathjax-server", 8000);
             };
             xhr.ontimeout = function () {
                 if (_mathProbeRequest === xhr)
@@ -160,6 +202,11 @@ YPage {
     }
     ListModel {
         id: attachedMediaModel
+    }
+    // 编辑态专用，与"还没发出去的预发送附件"分开：取消编辑时才分得清两者。
+    // 由 editMessage 回填、输入页的图片条直接读写，确认时再交回 chatbot.editMessageWithMedia。
+    ListModel {
+        id: editAttachedMediaModel
     }
 
     function clearAttachments() {
@@ -244,35 +291,111 @@ YPage {
         return false;
     }
 
-    function openInputPage(placeholder, prefill, onDone) {
-        let component = qmlCreateComponent("YInputPage");
-        if (Component.Ready === component.status) {
-            var incubator = component.incubateObject(id_page_pop_helper.containerItem);
-            let initFunc = function (kp) {
-                kp.backButtonClicked.connect(function () {
-                    qmlGlobal.inputPageShowing = false;
-                    kp.todoDestroy();
-                });
-                kp.inputFinished.connect(function (input) {
-                    qmlGlobal.inputPageShowing = false;
-                    if (onDone)
-                        onDone(input);
-                });
-                kp.placeHolderText = placeholder || "";
-                if (prefill)
-                    kp.enterText(prefill);
-                kp.show();
-                qmlGlobal.inputPageShowing = true;
-            };
-            if (incubator.status !== Component.Ready) {
-                incubator.onStatusChanged = function (s) {
-                    if (s === Component.Ready)
-                        initFunc(incubator.object);
-                };
-            } else {
-                initFunc(incubator.object);
-            }
+    // 输入页只建一次：一次建造 ≈ 4 张字符键盘 + 一个 Rime 会话（RimeWrapper 里同步 create_session）。
+    // 复用安全的前提是每次 show 前 resetInput() 清空状态；验证：连续编辑三次，日志里不再出现 destroy。
+    property var _inputPage: null
+    property var _inputPageDone: null
+    property var _inputPageModel: null
+    property bool _inputPagePending: false
+    property string _inputPagePlaceholder: ""
+    property string _inputPagePrefill: ""
+
+    function _initInputPage(inputPage) {
+        _inputPage = inputPage;
+        // 回调只连一次，每次打开用 _inputPageDone 换目标（QML 的 connect 不能按引用解绑临时闭包）。
+        inputPage.backButtonClicked.connect(function () {
+            qmlGlobal.inputPageShowing = false;
+            _inputPageDone = null;
+            // 取消编辑时清掉上一轮的图片，避免下一次打开残留。
+            if (_inputPageModel)
+                _inputPageModel.clear();
+        });
+        inputPage.inputFinished.connect(function (input) {
+            qmlGlobal.inputPageShowing = false;
+            var done = _inputPageDone;
+            _inputPageDone = null;
+            if (done)
+                done(input);
+        });
+        if (_inputPagePending)
+            _showInputPage();
+    }
+
+    function _showInputPage() {
+        _inputPagePending = false;
+        var inputPage = _inputPage;
+        if (!inputPage)
+            return;
+        inputPage.placeHolderText = _inputPagePlaceholder;
+        // 图片模型每次都要重设：编辑里删光图片后 ✓ 应该重新变灰，取消编辑后条要消失。
+        inputPage.attachmentModel = _inputPageModel;
+        inputPage.allowEmptyAccept = Qt.binding(function () {
+            return _inputPageModel !== null && _inputPageModel.count > 0;
+        });
+        inputPage.resetInput(_inputPagePrefill);
+        inputPage.show();
+        qmlGlobal.inputPageShowing = true;
+    }
+
+    function openInputPage(placeholder, prefill, onDone, attachmentModel) {
+        _inputPageDone = onDone || null;
+        _inputPageModel = attachmentModel || null;   // null = 普通输入（重命名会话等）
+        _inputPagePlaceholder = placeholder || "";
+        _inputPagePrefill = prefill || "";
+
+        if (_inputPage) {
+            _showInputPage();
+            return;
         }
+        if (_inputPagePending)
+            return;
+        _inputPagePending = true;
+
+        // 必须显式 Asynchronous：默认的 PreferSynchronous 会在点击处理里同步编译整条
+        // YInputPage 依赖链（9 个文件），点下去到出画面之间整段卡住。
+        var component = Qt.createComponent("qrc:/qml/YInputPage.qml", Component.Asynchronous);
+        if (component.status === Component.Error) {
+            _inputPagePending = false;
+            console.error("!!! YInputPage 组件创建失败 !!!", component.errorString());
+            return;
+        }
+        var incubated = false;
+        function incubateInputPage() {
+            // 组件状态可能多次变化（Loading -> Ready），只允许孵化一次，避免建出两个实例。
+            if (incubated)
+                return;
+            if (component.status === Component.Error) {
+                // 异步编译失败：把 pending 放掉，用户再点一次还能重建，而不是永远打不开输入页。
+                _inputPagePending = false;
+                console.error("!!! YInputPage 组件创建失败 !!!", component.errorString());
+                return;
+            }
+            if (component.status !== Component.Ready)
+                return;
+            incubated = true;
+            var incubator = component.incubateObject(
+                        id_page_pop_helper.containerItem,
+                        { "visible": false, "destroyOnBack": false, "attachmentModel": _inputPageModel },
+                        Qt.Asynchronous);
+            function ready() {
+                if (incubator.status === Component.Ready) {
+                    _initInputPage(incubator.object);
+                    component.destroy();
+                } else if (incubator.status === Component.Error) {
+                    _inputPagePending = false;
+                    console.error("!!! YInputPage 孵化失败 !!!");
+                    component.destroy();
+                }
+            }
+            if (incubator.status === Component.Ready)
+                ready();
+            else
+                incubator.onStatusChanged = ready;
+        }
+        if (component.status === Component.Ready)
+            incubateInputPage();
+        else
+            component.statusChanged.connect(incubateInputPage);
     }
 
     function replaceThinkingOrAppend(entry) {
@@ -561,6 +684,51 @@ YPage {
         return parts.join("\u0001");
     }
 
+    // 气泡行的图片附件要在后端落盘后换成带 localPath 的那一份，点开查看器靠它。
+    // 调用点：发送后立刻一次（视觉模型同步落库）+ 每次 messagesChanged（视觉代理异步落库）。
+    function _adoptPersistedAttachments() {
+        if (_pendingAttachmentRow < 0)
+            return;
+
+        // 待补的行一旦过期（生成结束或已被按历史重建）就放弃，否则会把别的消息的附件写进这一行。
+        if (!id_chat_assistant_page.isGenerating || _pendingAttachmentRow >= chatModel.count) {
+            _pendingAttachmentRow = -1;
+            return;
+        }
+        var row = chatModel.get(_pendingAttachmentRow);
+        if (!row || !row.isUser || (row.raw_text || "") !== _pendingAttachmentText) {
+            _pendingAttachmentRow = -1;
+            return;
+        }
+
+        var history = chatbot.messages;
+        if (history.length === 0)
+            return;
+        var last = history[history.length - 1];
+        // 代理路径下这条还没进历史，最后一条是上一条消息：正文对不上就等下次 messagesChanged。
+        // 代理落库时 content 会包一层「[图片描述]…[用户消息]…」，所以按后缀比对。
+        if (last.role !== 'user' || !(last.content || "").endsWith(_pendingAttachmentText))
+            return;
+        var parts = last.parts || [];
+        var attachments = [];
+        var persisted = false;
+        for (var p = 0; p < parts.length; p++) {
+            if (parts[p].type !== 'image_url' && parts[p].type !== 'file')
+                continue;
+            attachments.push(parts[p]);
+            if (parts[p].localPath)
+                persisted = true;
+        }
+        // 后端还没落盘：留着下一次 messagesChanged 再补。
+        if (!persisted)
+            return;
+        // 与 _renderHistoryRow 保持同一份内容，落盘后 source 已经是 file://，不再带 base64。
+        var json = JSON.stringify(attachments);
+        if (row.attachmentsJson !== json)
+            chatModel.setProperty(_pendingAttachmentRow, "attachmentsJson", json);
+        _pendingAttachmentRow = -1;
+    }
+
     // 以落库的历史为准，不一致时重建这一轮的行。
     function _rebuildCurrentTurnRows() {
         if (!chatbot || !chatbot.messages)
@@ -593,11 +761,21 @@ YPage {
             return;
 
         var toolNameMap = _buildToolNameMap(history, historyStart);
+        // 整轮重建会让列表高度先塌再涨，用户正在看历史时先记下位置再还原。
+        var keepReadingPosition = id_chat_listview.userScrolledUp;
+        if (keepReadingPosition)
+            id_chat_listview.captureReadAnchor();
         var removed = chatModel.count - modelStart;
         if (removed > 0)
             chatModel.remove(modelStart, removed);
         for (var idx = historyStart; idx < history.length; idx++)
             _renderHistoryRow(history[idx], idx, toolNameMap);
+        if (keepReadingPosition) {
+            id_chat_listview.forceLayout();
+            // 先同步还原一次：重建过程中列表会把视口钳到底部，晚一帧才还原会被看见
+            id_chat_listview.restoreReadAnchor();
+            id_read_anchor_timer.hold();
+        }
         _scheduleScrollToBottom();
     }
 
@@ -778,6 +956,8 @@ YPage {
             return;
         _keyboardRequested = false;
         keyboardPageRef.placeHolderText = "输入消息...";
+        // ✓ 可点与否由宿主决定（有预发送附件时空文字也要能确认）；预发送条随键盘隐藏，开页算一次就够。
+        keyboardPageRef.allowEmptyAccept = attachedFilesModel.count > 0 || attachedMediaModel.count > 0;
         keyboardPageRef.resetInput(messageContent);
         keyboardPageRef.show();
         qmlGlobal.inputPageShowing = true;
@@ -793,8 +973,12 @@ YPage {
         keyboardPage.inputFinished.connect(function (content) {
             if (typeof keyBoard !== 'undefined' && keyBoard !== null)
                 keyBoard.autoSendScan = keyBoard.autoSendScanConfig;
-            if (content && content.trim().length > 0)
-                handleUserSend(content.trim());
+            // 有预发送附件时空文字也放行（只发图片/文件）；验证：选一张图 → 开键盘直接点 ✓ 应发出消息。
+            var hasAttachment = attachedFilesModel.count > 0 || attachedMediaModel.count > 0;
+            var text = content ? content.trim() : "";
+            if (!hasAttachment && text.length === 0)
+                return;
+            handleUserSend(text);
         });
         if (_keyboardRequested)
             _showCachedKeyboard();
@@ -855,6 +1039,29 @@ YPage {
         _ensureKeyboardPage(true);
     }
 
+    // 只选图/文件、没打字时可直接发送：预发送条只在键盘收起时可见，没有草稿可带，文字按空处理。
+    // 验证：只选图 → 点条右侧「发送」，应立刻出现用户气泡（缩略图 + "[图片]"）。
+    function sendPendingAttachments() {
+        if (_preparingSend || isGenerating)
+            return;
+        if (attachedFilesModel.count === 0 && attachedMediaModel.count === 0)
+            return;
+
+        var hasImage = false;
+        for (var mi = 0; mi < attachedMediaModel.count; mi++) {
+            if (attachedMediaModel.get(mi).type === "image_url") {
+                hasImage = true;
+                break;
+            }
+        }
+        // 纯图片 + 模型不支持视觉：C++ 会剥掉图片（Backend::sendMessageWithMedia）只剩报错，先在这里拦住。
+        if (hasImage && !chatbot.capVision && !chatbot.proxyVisionModelId) {
+            toastBanner.warning("当前模型不支持视觉，请在模型设置中配置「视觉代理模型」");
+            return;
+        }
+        handleUserSend("");
+    }
+
     function handleUserSend(content) {
         if (_preparingSend || isGenerating)
             return;
@@ -889,6 +1096,11 @@ YPage {
             }
         }
         if (hasImageMedia && !chatbot.capVision && !chatbot.proxyVisionModelId) {
+            // 空文字 + 只有图片：C++ 剥掉图片后只剩"没有可发送的文字或媒体内容"这条报错，先拦住。
+            if ((!content || content.trim().length === 0) && attachedFilesModel.count === 0) {
+                toastBanner.warning("当前模型不支持视觉，请在模型设置中配置「视觉代理模型」");
+                return;
+            }
             toastBanner.warning("当前模型不支持视觉，请在模型设置中配置「视觉代理模型」，本次将仅发送文字");
         }
 
@@ -923,6 +1135,15 @@ YPage {
             }
             if (nonImageLabels.length > 0)
                 displayText = (displayText ? displayText + "\n" : "") + nonImageLabels.join(" | ");
+
+            // 空文字 + 只有附件时列表/落库/请求三处都要有占位（C++ 只在文字与附件都为空时报错）。
+            // 占位文案必须与 C++ 落库的 content 逐字一致，否则行签名永不相等，会反复整轮重建。
+            if (displayText.length === 0) {
+                if (mediaParts.length > 0)
+                    displayText = "[图片]";
+                else if (filesArray.length > 0)
+                    displayText = "请阅读附件内容";
+            }
             for (var fileIndex = 0; fileIndex < filesArray.length; fileIndex++)
                 messageAttachments.push({
                     "type": "file",
@@ -940,7 +1161,8 @@ YPage {
                 "isUser": true,
                 "isComplete": true,
                 "isThinking": false,
-                "raw_text": content,
+                // 与传给 C++ 的文本一致（含空文本时的占位），编辑回填与行签名比对都读它。
+                "raw_text": displayText,
                 "reasoning_text": "",
                 "isToolCall": false,
                 "toolCallId": "",
@@ -974,19 +1196,17 @@ YPage {
                             "size": filesArray[requestFileIndex].content ? filesArray[requestFileIndex].content.length : 0
                         });
                 }
-                chatbot.sendMessageWithMedia(content, JSON.stringify(mediaParts));
+                chatbot.sendMessageWithMedia(displayText, JSON.stringify(mediaParts));
             } else {
-                chatbot.sendMessage(content, filesJson);
+                chatbot.sendMessage(displayText, filesJson);
             }
 
+            // 图片附件先按 data URL 建行、后端落盘后才有 localPath，而视觉代理是异步落库的
+            // （此刻历史里最后一条可能还是上一条消息），所以只登记待补行，路径交给 messagesChanged。
             if (messageAttachments.length > 0) {
-                // chatbot.messages 开销大，只取一次。
-                var savedMessages = chatbot.messages;
-                if (savedMessages.length > 0) {
-                    var savedParts = savedMessages[savedMessages.length - 1].parts || [];
-                    if (savedParts.length > 0)
-                        chatModel.setProperty(userModelIndex, "attachmentsJson", JSON.stringify(savedParts));
-                }
+                _pendingAttachmentRow = userModelIndex;
+                _pendingAttachmentText = displayText;
+                _adoptPersistedAttachments();
             }
 
             if (typeof chatbot.getSessions === 'function') {
@@ -998,8 +1218,8 @@ YPage {
                         var sessions = data.sessions || [];
                         for (var si = 0; si < sessions.length; si++) {
                             if (sessions[si].id === activeId && (sessions[si].messageCount || 0) <= 2) {
-                                var autoTitle = content.substring(0, 20);
-                                if (content.length > 20)
+                                var autoTitle = displayText.substring(0, 20);
+                                if (displayText.length > 20)
                                     autoTitle += "...";
                                 chatbot.renameSession(activeId, autoTitle);
                                 break;
@@ -1164,43 +1384,104 @@ YPage {
         var cppIndex = _cppIndex(index);
         if (cppIndex < 0)
             return;
-        var oldContent = item.raw_text;
-        openInputPage("编辑消息...", oldContent, function (newContent) {
-            if (newContent && newContent.trim().length > 0) {
-                let countToRemove = chatModel.count - index;
-                if (countToRemove > 0)
-                    chatModel.remove(index, countToRemove);
-                chatModel.append({
-                    "text": newContent.trim(),
-                    "raw_text": newContent.trim(),
-                    "isUser": true,
-                    "isComplete": true,
-                    "isThinking": false,
-                    "isToolCall": false,
-                    "toolCallId": "",
-                    "toolState": "",
-                    "historyIndex": -1
-                });
-                chatModel.append({
-                    "text": "AI 正在思考...",
-                    "raw_text": "",
-                    "isUser": false,
-                    "isComplete": false,
-                    "isThinking": true,
-                    "isToolCall": false,
-                    "toolCallId": "",
-                    "toolState": "",
-                    "historyIndex": -1
-                });
-                Qt.callLater(function () {
-                    id_chat_listview.scrollToBottom();
-                });
-                if (chatbot && typeof chatbot.editMessage === "function")
-                    chatbot.editMessage(cppIndex, newContent.trim());
+        var oldContent = item.raw_text || "";
 
-                id_chat_assistant_page.isGenerating = true;
+        // 回填原图片：不填编辑后图片就没了（attachmentsJson 由 _renderHistoryRow 或发送路径写入）。
+        editAttachedMediaModel.clear();
+        var oldAttachments = [];
+        try {
+            oldAttachments = JSON.parse(item.attachmentsJson || "[]");
+        } catch (error) {
+            oldAttachments = [];
+        }
+        for (var ai = 0; ai < oldAttachments.length; ai++) {
+            var attachment = oldAttachments[ai];
+            if (!attachment || attachment.type !== "image_url")
+                continue;   // 文件附件不在编辑界面里，由 C++ 端原样保留（见 editMessageWithMedia）
+            editAttachedMediaModel.append({
+                "type": "image_url",
+                "label": attachment.name || "图片",
+                "source": attachment.source || attachment.url || "",
+                "localPath": attachment.localPath || "",
+                "name": attachment.name || "图片",
+                "mimeType": attachment.mimeType || ""
+            });
+        }
+
+        openInputPage("编辑消息...", oldContent, function (newContent) {
+            // 一份数据两处用：气泡的 attachmentsJson 读 source，C++ 读 url/localPath；
+            // 本地图只给 localPath，否则 file:// 会被当成远端 URL 发出去。
+            var keptMedia = [];
+            for (var mi = 0; mi < editAttachedMediaModel.count; mi++) {
+                var mediaItem = editAttachedMediaModel.get(mi);
+                var localPath = mediaItem.localPath || "";
+                keptMedia.push({
+                    "type": "image_url",
+                    "source": mediaItem.source || "",
+                    "url": localPath.length > 0 ? "" : (mediaItem.source || ""),
+                    "localPath": localPath,
+                    "name": mediaItem.name || "图片",
+                    "mimeType": mediaItem.mimeType || ""
+                });
             }
-        });
+            editAttachedMediaModel.clear();
+
+            // 文件/音频附件不在编辑界面里，但气泡读的是这份列表：拼回原行里非图片的条目，
+            // 否则编辑一次文字，文件卡片就从气泡里消失（数据还在，只是界面看不到）。
+            for (var oi = 0; oi < oldAttachments.length; oi++) {
+                var kept = oldAttachments[oi];
+                if (!kept || kept.type === "image_url")
+                    continue;
+                keptMedia.push(kept);
+            }
+
+            var finalText = newContent ? newContent.trim() : "";
+            // 文字清空但图片还在：给一个占位，与 C++ 落库的 content 保持一致。
+            if (finalText.length === 0 && keptMedia.length > 0)
+                finalText = "[图片]";
+            // 文字和图片都被清空：等同"删除本条"，不在编辑页里处理（保持原消息不动）。
+            if (finalText.length === 0)
+                return;
+
+            let countToRemove = chatModel.count - index;
+            if (countToRemove > 0)
+                chatModel.remove(index, countToRemove);
+            chatModel.append({
+                "text": finalText,
+                // MessageDelegate 靠这个字段渲染气泡里的缩略图，缺了图片就不显示。
+                "attachmentsJson": JSON.stringify(keptMedia),
+                "raw_text": finalText,
+                "isUser": true,
+                "isComplete": true,
+                "isThinking": false,
+                "isToolCall": false,
+                "toolCallId": "",
+                "toolState": "",
+                "historyIndex": -1
+            });
+            chatModel.append({
+                "text": "AI 正在思考...",
+                "raw_text": "",
+                "isUser": false,
+                "isComplete": false,
+                "isThinking": true,
+                "isToolCall": false,
+                "toolCallId": "",
+                "toolState": "",
+                "historyIndex": -1
+            });
+            Qt.callLater(function () {
+                id_chat_listview.scrollToBottom();
+            });
+            // 图片全删时也要传 "[]"：后端只按这份列表增删图片、保留文件/音频附件
+            // （旧接口 Backend::editMessage 会把 parts 整体清空）。
+            if (chatbot && typeof chatbot.editMessageWithMedia === "function")
+                chatbot.editMessageWithMedia(cppIndex, finalText, JSON.stringify(keptMedia));
+            else if (chatbot && typeof chatbot.editMessage === "function")
+                chatbot.editMessage(cppIndex, finalText);
+
+            id_chat_assistant_page.isGenerating = true;
+        }, editAttachedMediaModel);
     }
 
     YPagePopHelper {
@@ -1273,6 +1554,69 @@ YPage {
                 // 手势开始时只记录速度基准。
                 property bool _trackingFresh: true
 
+                // ── 阅读位置锚定 ──
+                // 公式异步出图，成文后高度还会变很多次：用户不在底部时让视口顶部那条消息停在原处。
+                property int _readAnchorIndex: -1
+                property real _readAnchorOffset: 0
+
+                // 顶部可能落在消息之间的间隙里，故按几个探针点找首条消息，都取不到就退回视口中线；
+                // 否则锚点失效后视口只能被边界钳制，看起来就像被拽回底部。
+                function probeViewportIndex() {
+                    var probes = [8, 2, 18, 28, 40];
+                    for (var i = 0; i < probes.length; i++) {
+                        var idx = indexAt(4, contentY + probes[i]);
+                        if (idx >= 0)
+                            return idx;
+                    }
+                    return indexAt(width / 2, contentY + height / 2);
+                }
+
+                function captureReadAnchor() {
+                    if (moving || !userScrolledUp) {
+                        _readAnchorIndex = -1;
+                        return;
+                    }
+                    var index = probeViewportIndex();
+                    if (index < 0) {
+                        _readAnchorIndex = -1;
+                        return;
+                    }
+                    var item = itemAtIndex(index);
+                    if (!item) {
+                        _readAnchorIndex = -1;
+                        return;
+                    }
+                    _readAnchorIndex = index;
+                    _readAnchorOffset = item.y - contentY;
+                }
+
+                // 返回 false 表示锚点已经失效，调用方需要重新采集。
+                function restoreReadAnchor() {
+                    if (_readAnchorIndex < 0 || moving || !userScrolledUp)
+                        return false;
+
+                    var maxY = Math.max(originY, originY + contentHeight - height);
+                    var item = itemAtIndex(_readAnchorIndex);
+                    if (!item && _readAnchorIndex < count) {
+                        // 目标消息不在缓存里（内容收缩后列表把视口钳到底部就会这样，那正是
+                        // "突然跳到最底下"的来源）：用 positionViewAtIndex 按模型定位并建出委托。
+                        _programmaticScroll = true;
+                        positionViewAtIndex(_readAnchorIndex, ListView.Beginning);
+                        _programmaticScroll = false;
+                        item = itemAtIndex(_readAnchorIndex);
+                    }
+                    if (!item)
+                        return false;
+
+                    var targetY = Math.max(originY, Math.min(item.y - _readAnchorOffset, maxY));
+                    if (Math.abs(targetY - contentY) > 0.5) {
+                        _programmaticScroll = true;
+                        contentY = targetY;
+                        _programmaticScroll = false;
+                    }
+                    return true;
+                }
+
                 onMovementStarted: {
                     // 只处理真实手势产生的滚动。
                     if (!dragging && !flicking)
@@ -1280,6 +1624,7 @@ YPage {
 
                     _flicking = true;
                     id_bottom_scroll_animation.stop();
+                    id_read_anchor_timer.stop();
                     _programmaticScroll = false;
                     if (id_rich_content_anchor_timer.running)
                         id_rich_content_anchor_timer.stop();
@@ -1302,6 +1647,8 @@ YPage {
                 onMovementEnded: {
                     _flicking = false;
                     updateUserScrolledState();
+                    // 手势结束时记下阅读位置，之后的异步高度变化都围着它还原。
+                    captureReadAnchor();
                     id_list_bounds_guard_timer.restart();
                 }
                 onContentYChanged: {
@@ -1412,8 +1759,14 @@ YPage {
                 onContentHeightChanged: {
                     if (_layoutStabilizing)
                         id_layout_stabilize_timer.restart();
-                    if (!moving && !id_rich_content_anchor_timer.running)
+                    // 内容高度变化（公式出图、流式增长、整轮重建）时用户不在底部就按锚点还原，不交给边界钳制。
+                    if (!moving && userScrolledUp) {
+                        if (!restoreReadAnchor())
+                            captureReadAnchor();
+                        id_read_anchor_timer.hold();
+                    } else if (!moving && !id_rich_content_anchor_timer.running) {
                         id_list_bounds_guard_timer.restart();
+                    }
                 }
 
                 header: Item {
@@ -1654,6 +2007,9 @@ YPage {
             filesModel: attachedFilesModel
             mediaModel: attachedMediaModel
             fontFamily: qmlGlobal.fontFamilyZhCn
+            // 预发送区是"只选图/文件、没打字"时唯一的发送入口（键盘页的 ✓ 被输入文本长度卡着）。
+            showSendButton: attachedFilesModel.count > 0 || attachedMediaModel.count > 0
+            onSendRequested: sendPendingAttachments()
             visible: attachedFilesModel.count > 0 || attachedMediaModel.count > 0
             z: 100
         }
@@ -1874,6 +2230,9 @@ YPage {
         onTriggered: {
             if (id_chat_listview.moving || id_rich_content_anchor_timer.running)
                 return;
+            // 用户不在底部时只还原阅读位置：内容高度收缩时直接钳制 contentY 会把视口掼到底部。
+            if (id_chat_listview.userScrolledUp && id_chat_listview.restoreReadAnchor())
+                return;
             // 只把 contentY 夹回边界，不做强排。
             var minY = id_chat_listview.originY;
             var maxY = Math.max(minY, minY + id_chat_listview.contentHeight - id_chat_listview.height);
@@ -1885,6 +2244,30 @@ YPage {
                 id_chat_listview._programmaticScroll = false;
             }
             id_chat_listview.returnToBounds();
+        }
+    }
+
+    // 内容高度连续变化（公式陆续出图）时按锚点还原几帧，等高度稳定后重新采集锚点。
+    Timer {
+        id: id_read_anchor_timer
+        interval: 16
+        repeat: true
+        property int ticks: 0
+
+        function hold() {
+            ticks = 0;
+            if (!running)
+                restart();
+        }
+
+        onTriggered: {
+            ticks++;
+            var restored = id_chat_listview.restoreReadAnchor();
+            if (!restored || id_chat_listview.moving || ticks >= 10) {
+                stop();
+                id_chat_listview.captureReadAnchor();
+                id_list_bounds_guard_timer.restart();
+            }
         }
     }
 
@@ -2208,6 +2591,8 @@ YPage {
         }
         function onMessagesChanged() {
             _syncHistoryIndices();
+            // 后端落盘图片附件后走这个信号，借它把气泡里那一行的 localPath 补上。
+            _adoptPersistedAttachments();
         }
         function onImageAttachmentsReceived(attachments) {
             for (var index = chatModel.count - 1; index >= 0; index--) {
