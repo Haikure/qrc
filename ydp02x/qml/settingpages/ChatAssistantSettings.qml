@@ -173,37 +173,78 @@ YBackButtonPage {
             }
 
             YSettingItemTitle {
-                title: "网络搜索 (Tavily)"
+                title: "网络搜索"
+            }
+
+            YSettingAboutClickableItem {
+                title: "搜索服务"
+                value: chatbot.searchProvider === "tavily" ? "Tavily"
+                       : chatbot.searchProvider === "deepseek" ? "DeepSeek" : "关闭"
+                imageName: "settings/info_more_arrow"
+                onClicked: {
+                    if (chatbot.searchProvider === "off")
+                        chatbot.searchProvider = "tavily";
+                    else if (chatbot.searchProvider === "tavily")
+                        chatbot.searchProvider = "deepseek";
+                    else
+                        chatbot.searchProvider = "off";
+                }
             }
 
             DescribedSwitchItem {
                 title: "启用网络搜索"
-                description: chatbot.tavilyConfigured ? "已配置 API Key" : "请先配置 Tavily API Key"
-                switchOn: chatbot.tavilyEnabled && chatbot.tavilyConfigured
+                description: !chatbot.searchConfigured ? "请先配置搜索服务的 API Key"
+                             : chatbot.searchProvider === "deepseek" ? "DeepSeek 网页搜索"
+                             : "Tavily 网页搜索"
+                switchOn: chatbot.searchEnabled && chatbot.searchConfigured
                 interval: 0
-                enabled: chatbot.tavilyConfigured
+                enabled: chatbot.searchConfigured
                 onTimerTriggered: {
-                    chatbot.tavilyEnabled = !chatbot.tavilyEnabled;
+                    chatbot.searchEnabled = !chatbot.searchEnabled;
                 }
             }
 
             YSettingAboutClickableItem {
                 title: "密钥"
-                value: chatbot.tavilyConfigured ? "已配置" : "未配置"
+                value: chatbot.searchConfigured ? "已配置" : "未配置"
+                visible: chatbot.searchProvider !== "off"
                 imageName: "settings/info_more_arrow"
                 onClicked: {
                     var cfg = {};
                     try {
-                        cfg = JSON.parse(chatbot.getTavilyConfig());
+                        cfg = JSON.parse(chatbot.getSearchConfig());
                     } catch (error) {
-                        console.warn("读取 Tavily 配置失败:", error);
+                        console.warn("读取网络搜索配置失败:", error);
                     }
-                    openKeyboard("输入 Tavily API Key...", cfg.apiKey || "", function(apiKey) {
-                        if (apiKey && apiKey.trim().length > 0) {
-                            cfg.apiKey = apiKey.trim();
-                            chatbot.setTavilyConfig(JSON.stringify(cfg));
+                    var isDeepseek = chatbot.searchProvider === "deepseek";
+                    var placeholder = isDeepseek ? "输入 DeepSeek API Key（留空则用模型 Key）..."
+                                                 : "输入 Tavily API Key...";
+                    var current = isDeepseek ? (cfg.deepseekApiKey || "") : (cfg.tavilyApiKey || "");
+                    openKeyboard(placeholder, current, function(key) {
+                        var next = {};
+                        try {
+                            next = JSON.parse(chatbot.getSearchConfig());
+                        } catch (error) {
+                            console.warn("读取网络搜索配置失败:", error);
                         }
+                        if (isDeepseek)
+                            next.deepseekApiKey = key ? key.trim() : "";
+                        else
+                            next.tavilyApiKey = key ? key.trim() : "";
+                        chatbot.setSearchConfig(JSON.stringify(next));
                     });
+                }
+            }
+
+            YSettingAboutClickableItem {
+                title: "返回条数"
+                value: chatbot.searchCount + " 条"
+                visible: chatbot.searchProvider !== "off"
+                imageName: "settings/info_more_arrow"
+                onClicked: {
+                    var opts = [3, 5, 8, 10];
+                    var idx = opts.indexOf(chatbot.searchCount);
+                    chatbot.searchCount = opts[(idx + 1) % opts.length];
                 }
             }
 

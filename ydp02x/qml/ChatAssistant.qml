@@ -2069,15 +2069,15 @@ YPage {
         MoreMenuPopup {
             id: id_more_menu
             fontFamily: qmlGlobal.fontFamilyZhCn
-            tavilyEnabled: chatbot.tavilyEnabled
-            tavilyConfigured: chatbot.tavilyConfigured
+            searchEnabled: chatbot.searchEnabled
+            searchConfigured: chatbot.searchConfigured
             onWebSearchToggled: {
-                if (!chatbot.tavilyConfigured) {
-                    toastBanner.warning("请先在设置中配置 Tavily API Key");
+                if (!chatbot.searchConfigured) {
+                    toastBanner.warning("请先在设置中配置搜索服务的 API Key");
                     return;
                 }
-                chatbot.tavilyEnabled = !chatbot.tavilyEnabled;
-                isSearchEnabled = chatbot.tavilyEnabled;
+                chatbot.searchEnabled = !chatbot.searchEnabled;
+                isSearchEnabled = chatbot.searchEnabled;
             }
             onFileReferenceRequested: {
                 if (typeof qmlGlobal !== 'undefined' && qmlGlobal !== null) {
@@ -2659,7 +2659,7 @@ YPage {
             if (lastIndex >= 0 && chatModel.get(lastIndex).isThinking)
                 chatModel.remove(lastIndex);
         }
-        function onTavilySearchStarted(toolCallId, query) {
+        function onWebSearchStarted(toolCallId, query) {
             generationDoneTimer.stop();
             _toolCallActive = true;
             id_chat_assistant_page.isGenerating = true;
@@ -2669,7 +2669,7 @@ YPage {
                 id_chat_listview.scrollToBottom();
             });
         }
-        function onTavilySearchFinished(toolCallId, success, summary, resultText) {
+        function onWebSearchFinished(toolCallId, success, summary, resultText) {
             updateCardByToolCallId(toolCallId, {
                 "text": success ? "已完成搜索：" + summary : "搜索失败：" + summary,
                 "raw_text": resultText,

@@ -4,8 +4,8 @@ Item {
     id: root
 
     property var fontFamily
-    property bool tavilyEnabled: false
-    property bool tavilyConfigured: false
+    property bool searchEnabled: false
+    property bool searchConfigured: false
 
     signal webSearchToggled()
     signal fileReferenceRequested()
@@ -66,7 +66,7 @@ Item {
 
             Rectangle {
                 width: 100; height: 60; radius: 12
-                color: root.tavilyEnabled ? "#2B5278" : "#2C2C2E"
+                color: root.searchEnabled ? "#2B5278" : "#2C2C2E"
                 Column {
                     anchors.centerIn: parent
                     spacing: 4
@@ -76,7 +76,7 @@ Item {
                         onPaint: {
                             var ctx = getContext("2d");
                             ctx.reset();
-                            ctx.strokeStyle = root.tavilyEnabled ? "#FFFFFF" : "#8899AA";
+                            ctx.strokeStyle = root.searchEnabled ? "#FFFFFF" : "#8899AA";
                             ctx.lineWidth = 2;
                             ctx.lineCap = "round";
                             var cx = 9, cy = 9, r = 6;
@@ -88,7 +88,7 @@ Item {
                             ctx.lineTo(cx + 8, cy + 8);
                             ctx.stroke();
                         }
-                        property bool _dep: root.tavilyEnabled
+                        property bool _dep: root.searchEnabled
                         on_DepChanged: requestPaint()
                     }
                     Text {
