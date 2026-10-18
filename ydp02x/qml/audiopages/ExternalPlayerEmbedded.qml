@@ -11,7 +11,7 @@ import FFmpegPlayer 1.0 as FFmpegPlayer
  * 视频由 FFmpegPlayer 插件**画进本组件的场景图**，所以它跟随左右手模式的 180° 旋转、
  * 也能被本组件的 OSD 叠在上面（mpv/waylandsink 那种独立表面做不到）。
  * 控件与手势参考了上游 examples/Player.qml：
- *   单击     OSD 隐藏时唤出控件；已显示时播放/暂停
+ *   单击     底部控制栏和缩放控制区外切换播放/暂停，并显示 OSD
  *   长按     临时 2 倍速（松手恢复）
  *   横滑     快进/快退（整屏宽度 = 60s），松手才真正跳转
  *   上下滑   显示/隐藏 OSD
@@ -48,6 +48,12 @@ Item {
         osdVisible = visible || zoomMode;
         if (osdVisible && playing && !zoomMode && !seeking && !boosting)
             osdHideTimer.restart();
+    }
+
+    function togglePlayback() {
+        if (playing) id_player.pause();
+        else id_player.play();
+        setOsdVisible(true);
     }
 
     function zoomIn() {
@@ -117,6 +123,8 @@ Item {
     FFmpegPlayer.VideoPlayer {
         id: id_player
         anchors.fill: parent
+        downsamplingEnabled: !id_page.zoomMode
+        smooth: !id_page.zoomMode
         scale: Math.pow(2, id_page.zoomLevel)
         transformOrigin: Item.Center
         transform: Translate { x: id_page.panX; y: id_page.panY }
@@ -143,7 +151,7 @@ Item {
     MouseArea {
         id: id_gesture
         anchors.fill: parent
-        enabled: !id_page.zoomMode && !id_player.loading
+        enabled: !id_page.zoomMode
         pressAndHoldInterval: 400
 
         property bool held: false
@@ -194,7 +202,7 @@ Item {
                     return;
                 }
                 // 暂停时也允许拖动跳转（上游示例同样如此）：连续请求以最后一次为准，暂停状态保持
-                if (dx > dy * 1.25 && id_player.duration > 0) swipeSeeking = true;
+                if (!id_player.loading && dx > dy * 1.25 && id_player.duration > 0) swipeSeeking = true;
                 else if (dy > dx * 1.25) verticalGesture = true;
             }
             if (swipeSeeking && moved) {
@@ -204,7 +212,7 @@ Item {
         }
 
         onPressAndHold: {
-            if (!moved && id_page.playing) {
+            if (!moved && !id_player.loading && id_page.playing) {
                 held = true;
                 id_page.boosting = true;
                 id_player.beginBoost();
@@ -238,14 +246,7 @@ Item {
 
         onClicked: {
             if (held || moved) return;
-            if (!id_page.osdVisible) {
-                // 控件已隐藏时，这一下只用来唤出控件（顺便露出返回按钮），不改播放状态
-                id_page.setOsdVisible(true);
-                return;
-            }
-            osdHideTimer.restart();
-            if (id_player.playbackState === FFmpegPlayer.VideoPlayer.PlayingState) id_player.pause();
-            else id_player.play();
+            id_page.togglePlayback();
         }
     }
 
@@ -254,20 +255,29 @@ Item {
         anchors.fill: parent
         enabled: id_page.zoomMode
 
+        property bool moved: false
+        property real startX: 0
+        property real startY: 0
         property real lastX: 0
         property real lastY: 0
 
         onPressed: {
+            moved = false;
+            startX = mouse.x;
+            startY = mouse.y;
             lastX = mouse.x;
             lastY = mouse.y;
         }
         onPositionChanged: {
             if (!pressed) return;
+            if (Math.abs(mouse.x - startX) > 12 || Math.abs(mouse.y - startY) > 12)
+                moved = true;
             id_page.panX += mouse.x - lastX;
             id_page.panY += mouse.y - lastY;
             lastX = mouse.x;
             lastY = mouse.y;
         }
+        onClicked: if (!moved) id_page.togglePlayback()
     }
 
     // ─── OSD ────────────────────────────────────────────────────
@@ -290,6 +300,14 @@ Item {
                 GradientStop { position: 0.0; color: "#00151c26" }
                 GradientStop { position: 0.35; color: "#80151c26" }
                 GradientStop { position: 1.0; color: "#dc101620" }
+            }
+
+            // 控制栏的空白区域也拦截点击，避免触发画面上的播放/暂停。
+            MouseArea {
+                anchors.fill: parent
+                onPressed: osdHideTimer.stop()
+                onReleased: id_page.setOsdVisible(true)
+                onCanceled: id_page.setOsdVisible(true)
             }
 
             Column {
@@ -520,6 +538,14 @@ Item {
                     }
                 }
             }
+        }
+
+        // 缩放按钮之间的空隙也拦截点击，整块控制区都不触发播放/暂停。
+        MouseArea {
+            anchors.fill: id_zoom_controls
+            onPressed: osdHideTimer.stop()
+            onReleased: id_page.setOsdVisible(true)
+            onCanceled: id_page.setOsdVisible(true)
         }
 
         Column {
