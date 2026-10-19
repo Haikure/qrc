@@ -50,6 +50,14 @@ Item {
             osdHideTimer.restart();
     }
 
+    function handleOsdSwipe(deltaX, deltaY) {
+        if (Math.abs(deltaY) < Math.max(40, height * 0.07) ||
+                Math.abs(deltaY) <= Math.abs(deltaX) * 1.25)
+            return false;
+        setOsdVisible(deltaY > 0);
+        return true;
+    }
+
     function togglePlayback() {
         if (playing) id_player.pause();
         else id_player.play();
@@ -233,9 +241,8 @@ Item {
             }
             var deltaX = mouse.x - startX;
             var deltaY = mouse.y - startY;
-            if (verticalGesture && Math.abs(deltaY) >= Math.max(40, height * 0.07) &&
-                    Math.abs(deltaY) > Math.abs(deltaX) * 1.25)
-                id_page.setOsdVisible(deltaY > 0);
+            if (verticalGesture)
+                id_page.handleOsdSwipe(deltaX, deltaY);
             swipeSeeking = false;
             verticalGesture = false;
             if (id_page.osdVisible && !id_page.zoomMode && id_page.playing)
@@ -302,12 +309,22 @@ Item {
                 GradientStop { position: 1.0; color: "#dc101620" }
             }
 
-            // 控制栏的空白区域也拦截点击，避免触发画面上的播放/暂停。
+            // 空白区域拦截单击，但仍允许上下滑动显示/隐藏 OSD。
             MouseArea {
                 anchors.fill: parent
-                onPressed: osdHideTimer.stop()
-                onReleased: id_page.setOsdVisible(true)
-                onCanceled: id_page.setOsdVisible(true)
+                property real startX: 0
+                property real startY: 0
+
+                onPressed: {
+                    osdHideTimer.stop();
+                    startX = mouse.x;
+                    startY = mouse.y;
+                }
+                onReleased: {
+                    if (!id_page.handleOsdSwipe(mouse.x - startX, mouse.y - startY))
+                        id_page.setOsdVisible(true);
+                }
+                onCanceled: id_page.setOsdVisible(id_page.osdVisible)
             }
 
             Column {
