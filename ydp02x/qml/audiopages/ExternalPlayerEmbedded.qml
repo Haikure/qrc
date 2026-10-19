@@ -132,7 +132,7 @@ Item {
         id: id_player
         anchors.fill: parent
         downsamplingEnabled: !id_page.zoomMode
-        smooth: !id_page.zoomMode
+        smooth: true
         scale: Math.pow(2, id_page.zoomLevel)
         transformOrigin: Item.Center
         transform: Translate { x: id_page.panX; y: id_page.panY }
