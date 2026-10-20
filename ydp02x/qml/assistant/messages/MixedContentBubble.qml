@@ -1,9 +1,15 @@
 import QtQuick 2.12
 import "MessageLayoutCache.js" as MessageLayoutCache
+import "MessageState.js" as MessageState
 
 Item {
     id: root
 
+    property string messageId: ""
+    property string sessionId: ""
+    property var savedState: MessageState.entry(sessionId, messageId)
+    readonly property string layoutKey: MessageState.version(rawText) + ":" + maxWidth + ":" + (fontFamily || "")
+    property real committedRichHeight: 0
     property string rawText: ""
     property bool isComplete: false
     property bool serverAvailable: false
@@ -12,14 +18,12 @@ Item {
     property bool layoutBusy: false
     // 用户正在翻看历史：此时公式为就位不再做高度动画，避免内容高度反复抖动。
     property bool scrolledUp: false
-    // 流式期间只渲染尾部文本。
-    property bool streamTailOnly: false
     property int parseDelay: 16
     readonly property bool renderReady: _renderReady && !crossFadeAnimation.running
 
     width: maxWidth
     implicitHeight: !isComplete ? streamingText.implicitHeight
-                                : (_renderReady ? richContentColumn.implicitHeight : placeholderHeight)
+                                : (_renderReady ? committedRichHeight : placeholderHeight)
 
     property var _blocks: []
     property int _renderGeneration: 0
@@ -39,9 +43,66 @@ Item {
     property bool _nativeBlocks: false
     property string _renderSource: ""
     property bool _hasRenderSource: false
-    readonly property real placeholderHeight: streamingText.implicitHeight
+    readonly property real placeholderHeight: _cachedHeight > 0 ? _cachedHeight : streamingText.implicitHeight
+
+    function readingPoint(y) {
+        if (!_renderReady || _useFastPath)
+            return sourcePosition.point(y, implicitHeight);
+        var blocks = _geometry();
+        for (var i = blocks.length - 1; i >= 0; --i) {
+            if (y < blocks[i].y && i > 0) continue;
+            var data = _blocks[i] || {};
+            var fraction = Math.max(0, Math.min(1, (y - blocks[i].y) / Math.max(1, blocks[i].height)));
+            return {block: i, offset: y - blocks[i].y, key: layoutKey,
+                    source: (data.sourceStart || 0) + Math.floor(fraction * ((data.sourceEnd || 0) - (data.sourceStart || 0)))};
+        }
+        return {block: -1, offset: y};
+    }
+    function readingOffset(point) {
+        if (!_renderReady || _useFastPath)
+            return sourcePosition.offset(point, implicitHeight);
+        var blocks = _geometry();
+        if (point.block >= 0 && point.key === layoutKey) {
+            var block = blocks[Math.min(point.block, blocks.length - 1)];
+            return block ? block.y + point.offset : point.offset;
+        }
+        for (var i = 0; i < _blocks.length; ++i) {
+            var data = _blocks[i];
+            if (data.sourceStart === undefined || point.source === undefined) continue;
+            if (point.source >= data.sourceStart && point.source < data.sourceEnd && blocks[i])
+                return blocks[i].y + blocks[i].height * (point.source - data.sourceStart) / Math.max(1, data.sourceEnd - data.sourceStart);
+        }
+        return point.offset;
+    }
+    function _geometry() {
+        var blocks = [];
+        if (_useFastPath) return [{y: 0, height: fastRichText.implicitHeight}];
+        for (var i = 0; i < blockRepeater.count; ++i) {
+            var item = blockRepeater.itemAt(i);
+            if (item) blocks.push({y: item.y, height: item.height});
+        }
+        return blocks.length ? blocks : savedState.blocks;
+    }
+    function _saveGeometry() {
+        if (!_renderReady || layoutBusy) return;
+        renderCommitStarted();
+        committedRichHeight = richContentColumn.implicitHeight;
+        _cachedHeight = committedRichHeight;
+        savedState.richHeight = committedRichHeight;
+        savedState.richKey = layoutKey;
+        savedState.blocks = _geometry();
+    }
+    onMaxWidthChanged: { _hasRenderSource = false; _scheduleParse(); }
+    onFontFamilyChanged: { _hasRenderSource = false; _scheduleParse(); }
 
     signal renderCommitStarted
+
+    TextPosition {
+        id: sourcePosition
+        width: root.maxWidth
+        text: root.rawText
+        font.family: root.fontFamily || ""
+    }
 
     function _commitRender() {
         if (_renderReady)
@@ -64,7 +125,9 @@ Item {
         }
         _commitPending = false;
         renderCommitStarted();
+        committedRichHeight = richContentColumn.implicitHeight;
         _renderReady = true;
+        _saveGeometry();
         richContentColumn.opacity = 0;
         _cachedHeight = richContentColumn.implicitHeight;
         MessageLayoutCache.setHeight(rawText, maxWidth, _cachedHeight);
@@ -79,6 +142,10 @@ Item {
                 if (isComplete && !_renderReady)
                     _parsePending = true;
             }
+            return;
+        }
+        if (_renderReady) {
+            geometryCommit.restart();
             return;
         }
         // Commit a completed block tree before a deferred parse.
@@ -124,7 +191,9 @@ Item {
         _showSkeleton = true;
         _useFastPath = false;
         _fastHtml = "";
-        _cachedHeight = MessageLayoutCache.getHeight(rawText, maxWidth);
+        // The prior measured geometry reserves space even when parsing/images
+        // were evicted, or when new width/font/content requires a fresh layout.
+        _cachedHeight = savedState.richHeight || MessageLayoutCache.getHeight(rawText, maxWidth);
         crossFadeAnimation.stop();
         skeletonPlaceholder.opacity = 1;
         richContentColumn.opacity = 0;
@@ -170,7 +239,23 @@ Item {
         if (isComplete)
             _scheduleParse();
     }
-    Component.onDestruction: _cancelParseRequest()
+    Component.onDestruction: {
+        // Stop scripts while their QML context and child items are still alive.
+        // Offscreen delegates can disappear in the middle of the crossfade.
+        crossFadeAnimation.stop();
+        geometryCommit.stop();
+        parseTimer.stop();
+        commitSettleTimer.stop();
+        renderWatchdog.stop();
+        blockBatchTimer.stop();
+        _cancelParseRequest();
+    }
+
+    Timer {
+        id: geometryCommit
+        interval: 0
+        onTriggered: root._saveGeometry()
+    }
 
     Timer {
         id: parseTimer
@@ -318,7 +403,7 @@ Item {
         id: streamingText
         opacity: root.isComplete ? 0 : 1
         width: root.maxWidth
-        text: root.streamTailOnly && root.rawText.length > 1500 ? root.rawText.slice(-1500) : root.rawText
+        text: root.rawText
         textFormat: Text.PlainText
         wrapMode: Text.WrapAnywhere
         color: "#FFFFFF"
@@ -353,12 +438,7 @@ Item {
         width: root.maxWidth
         spacing: 6
         opacity: 0
-        onImplicitHeightChanged: {
-            if (!root._renderReady)
-                return;
-            root._cachedHeight = implicitHeight;
-            MessageLayoutCache.setHeight(root.rawText, root.maxWidth, implicitHeight);
-        }
+        onImplicitHeightChanged: { if (root._renderReady) geometryCommit.restart(); }
 
         Text {
             id: fastRichText
@@ -375,6 +455,7 @@ Item {
         }
 
         Repeater {
+            id: blockRepeater
             model: root.isComplete && !root._useFastPath ? root._blocks.length : 0
 
             delegate: Loader {
@@ -454,7 +535,8 @@ Item {
             display: true
             serverAvailable: root.serverAvailable
             maxWidth: root.maxWidth
-            animateHeight: !root.scrolledUp
+            animateHeight: false
+            layoutBusy: root.layoutBusy
             fontFamily: root.fontFamily
             onLayoutAboutToChange: root.renderCommitStarted()
         }
@@ -703,11 +785,13 @@ Item {
                         rows.push({"header": false, "stripe": r % 2 === 0, "cells": packed});
                 }
                 mTableRows = rows;
-                Qt.callLater(_relayoutLater);
+                tableRelayout.restart();
             }
 
-            function _relayoutLater() {
-                tableColumn.relayout();
+            Timer {
+                id: tableRelayout
+                interval: 0
+                onTriggered: tableColumn.relayout()
             }
 
             // 单元格 → { segments }，空单元格剔除；表头文字作为 label 片段拼在内容前面
@@ -856,7 +940,8 @@ Item {
             property bool mDisplay: false
             serverAvailable: root.serverAvailable
             maxWidth: root.maxWidth
-            animateHeight: !root.scrolledUp
+            animateHeight: false
+            layoutBusy: root.layoutBusy
             fontFamily: root.fontFamily
             onLayoutAboutToChange: root.renderCommitStarted()
         }
@@ -1087,7 +1172,7 @@ Item {
             }
             // 交给 C++ 解析器，产出带强调标志位的块。
             _nativeBlocks = true;
-            _parseRequestId = String(_renderGeneration) + ":" + String(Date.now()) + ":" + String(Math.random());
+            _parseRequestId = sessionId + ":" + messageId + ":" + layoutKey + ":" + String(_renderGeneration) + ":" + String(Date.now()) + ":" + String(Math.random());
             chatbot.parseMarkdownAsync(text, _parseRequestId);
             return;
         }

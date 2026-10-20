@@ -16,7 +16,18 @@ Item {
     property var fontFamily
     // 用户正在翻看历史时不播放高度动画：动画会把内容高度拆成 120ms 的连续变化，
     // 公式一多就会让列表反复重排。
-    property bool animateHeight: true
+    property bool animateHeight: false
+    property bool layoutBusy: false
+    property int _generation: 0
+    property bool _alive: true
+    property bool _pendingError: false
+    onLayoutBusyChanged: {
+        if (!layoutBusy) {
+            if (_pendingError) _commitError();
+            else _commitLines();
+        }
+    }
+    Component.onDestruction: { _alive = false; ++_generation; }
     // 续行缩进（换行显示时，第二行起向右缩进，表明是同一式子的延续）
     property real continuationIndent: 14
 
@@ -128,6 +139,8 @@ Item {
     Component.onCompleted: _reset()
 
     function _reset() {
+        ++_generation;
+        _pendingError = false;
         commitTimer.stop();
         retryTimer.stop();
         slotTimer.stop();
@@ -146,7 +159,7 @@ Item {
 
     function _commitLines() {
         commitTimer.stop();
-        if (root._pendingLines.length === 0)
+        if (root.layoutBusy || root._pendingLines.length === 0)
             return;
         root.layoutAboutToChange();
         root._lines = root._pendingLines;
@@ -159,6 +172,18 @@ Item {
         root._state = MathCache.DONE;
     }
 
+    function _commitError() {
+        _pendingError = true;
+        if (layoutBusy) return;
+        layoutAboutToChange();
+        _lines = [];
+        _state = MathCache.ERROR;
+        _pendingError = false;
+    }
+
+    onMaxWidthChanged: _reset()
+    onDisplayChanged: _reset()
+
     function _fetchSvg() {
         if (root.latex === "")
             return;
@@ -166,9 +191,7 @@ Item {
             // 重试期间服务端变得不可用：必须落到回退态，否则会永远停在加载动画上
             // （回调不会再来，也没有定时器再触发）。
             if (root._state === MathCache.LOADING) {
-                root.layoutAboutToChange();
-                root._lines = [];
-                root._state = MathCache.ERROR;
+                root._commitError();
             }
             return;
         }
@@ -185,8 +208,9 @@ Item {
     function _enqueue() {
         if (root._state !== MathCache.LOADING)
             return;
+        var generation = root._generation;
         MathCache.enqueueRequest(root.latex, root.display, root.maxWidth, function (result) {
-            if (root == null || root._state !== MathCache.LOADING)
+            if (root == null || !root._alive || generation !== root._generation || root._state !== MathCache.LOADING)
                 return;
             if (result.success) {
                 root._attempts = 0;
@@ -206,9 +230,7 @@ Item {
                 retryTimer.interval = 300 * Math.pow(2, root._attempts - 1) + Math.round(Math.random() * 200);
                 retryTimer.restart();
             } else {
-                root.layoutAboutToChange();
-                root._lines = [];
-                root._state = MathCache.ERROR;
+                root._commitError();
             }
         });
     }

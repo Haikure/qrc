@@ -5,7 +5,6 @@ import "./settingpages"
 import "./audiopages"
 import "./assistant/components"
 import "./assistant/messages"
-import "./assistant/messages/ChatNavigation.js" as ChatNavigation
 import "./assistant/dialogs"
 import QtQuick 2.15
 import QtGraphicalEffects 1.12
@@ -41,14 +40,6 @@ YPage {
     // 等 messagesChanged 时按历史把路径补回来（-1 = 没有待补的行）。
     property int _pendingAttachmentRow: -1
     property string _pendingAttachmentText: ""
-    property int _pendingJumpIndex: -1
-    property int _navigationTargetIndex: -1
-    property bool _navigationJumping: false
-    property int _jumpAttempts: 0
-    property int _jumpStableFrames: 0
-    property int _followAttempts: 0
-    property int _followStableFrames: 0
-    property real _followLastContentHeight: -1
     // 右侧手势条宽度 = 气泡右侧留白。
     readonly property int  chatListRightMargin: 2
     readonly property int  bubbleRightInset: 8
@@ -58,38 +49,12 @@ YPage {
     property int _activeReasoningIndex: -1
     property var _mathProbeRequest: null
 
-    function _beginRichContentCommit() {
-        if (id_chat_listview.moving)
-            return;
-        if (id_rich_content_anchor_timer.running)
-            return;
+    function _beginRichContentCommit() { scrollController.beforeLayout(); }
 
-        // 用户正在往回翻历史：钉住阅读位置，不做任何贴底。
-        if (id_chat_listview.userScrolledUp) {
-            id_chat_listview.captureReadAnchor();
-            id_read_anchor_timer.hold();
-            return;
-        }
-
-        var distanceToBottom = id_chat_listview.contentHeight - id_chat_listview.contentY - id_chat_listview.height;
-        if (distanceToBottom <= id_chat_listview.bottomThreshold) {
-            id_rich_content_anchor_timer.pinBottom = true;
-            id_rich_content_anchor_timer.anchorIndex = -1;
-            id_rich_content_anchor_timer.beginTracking();
-            return;
-        }
-
-        var anchorIndex = id_chat_listview.probeViewportIndex();
-        if (anchorIndex < 0)
-            return;
-        var anchorItem = id_chat_listview.itemAtIndex(anchorIndex);
-        if (!anchorItem)
-            return;
-
-        id_rich_content_anchor_timer.pinBottom = false;
-        id_rich_content_anchor_timer.anchorIndex = anchorIndex;
-        id_rich_content_anchor_timer.anchorOffset = anchorItem.y - id_chat_listview.contentY;
-        id_rich_content_anchor_timer.beginTracking();
+    ChatScrollController {
+        id: scrollController
+        view: id_chat_listview
+        model: chatModel
     }
 
     function resetCaptureMode() {
@@ -410,6 +375,7 @@ YPage {
 
     function _appendAnswerPlaceholder() {
         chatModel.append({
+            "messageId": chatbot.responseMessageId + ":answer",
             "text": "",
             "raw_text": "",
             "reasoning_text": "",
@@ -443,6 +409,7 @@ YPage {
 
     function _makeReasoningEntry(content) {
         return {
+            "messageId": chatbot.responseMessageId + ":reasoning",
             "text": "",
             "raw_text": content || "",
             "reasoning_text": "",
@@ -457,128 +424,49 @@ YPage {
         };
     }
 
-    function _makeToolCardEntry(toolCallId, toolState, text, rawText, isComplete, entries) {
-        return {
-            "text": text || "",
-            "raw_text": rawText || "",
-            "isUser": false,
-            "isThinking": false,
-            "isReasoning": false,
-            "isComplete": typeof isComplete !== "undefined" ? isComplete : false,
-            "isToolCall": true,
-            "toolCallId": toolCallId,
-            "toolState": toolState,
-            "toolEntriesJson": entries ? JSON.stringify(entries) : "",
-            "historyIndex": -1
-        };
-    }
-
-    function _applyToolGroup(index, entries) {
-        var completed = 0;
-        var hasError = false;
-        var activeState = "done";
-        var details = [];
-        for (var i = 0; i < entries.length; i++) {
+    function _toolRow(batchId, entries) {
+        var completed = 0, error = false, cancelled = false, details = [];
+        for (var i = 0; i < entries.length; ++i) {
             var entry = entries[i];
-            if (entry.complete)
-                completed++;
-            if (entry.state === "error")
-                hasError = true;
-            else if (!entry.complete)
-                activeState = entry.state || "searching";
-            details.push((i + 1) + ". " + entry.text + (entry.raw ? "\n" + entry.raw : ""));
+            if (entry.state === "done" || entry.state === "error" || entry.state === "cancelled") ++completed;
+            error = error || entry.state === "error";
+            cancelled = cancelled || entry.state === "cancelled";
+            details.push((i + 1) + ". " + entry.text + "\n" + (entry.result || entry.arguments || ""));
         }
-        var allComplete = completed === entries.length;
-        var state = hasError ? "error" : (allComplete ? "done" : activeState);
-        var title = entries.length === 1 ? entries[0].text
-                                        : "工具调用 " + entries.length + " 项 · " + completed + " 已完成";
-        chatModel.set(index, {
-            "text": title,
-            "raw_text": details.join("\n\n"),
-            "toolState": state,
-            "isComplete": allComplete,
-            "toolCallId": entries.length > 0 ? entries[0].id : "",
-            "toolEntriesJson": JSON.stringify(entries)
-        });
+        var complete = completed === entries.length;
+        return {messageId: batchId + ":tools", batchId: batchId,
+                text: entries.length === 1 ? entries[0].text : "工具调用 " + entries.length + " 项 · " + completed + " 已结束",
+                raw_text: details.join("\n\n"), reasoning_text: "", isUser: false,
+                isThinking: false, isReasoning: false, isToolCall: true, isComplete: complete,
+                toolCallId: entries.length ? entries[0].callId : "",
+                toolState: complete ? (error ? "error" : cancelled ? "cancelled" : "done") :
+                           entries.some(function (e) { return e.state === "pending"; }) ? "pending" : "searching",
+                toolEntriesJson: JSON.stringify(entries), historyIndex: -1};
     }
 
-    function _upsertToolEntry(toolCallId, text, rawText, toolState, isComplete) {
-        var groupIndex = -1;
-        var entries = [];
-        for (var searchIndex = chatModel.count - 1; searchIndex >= 0; searchIndex--) {
-            var candidate = chatModel.get(searchIndex);
-            if (candidate.isUser)
-                break;
-            if (!candidate.isToolCall || !candidate.toolEntriesJson)
-                continue;
-            var candidateEntries;
-            try { candidateEntries = JSON.parse(candidate.toolEntriesJson); } catch (e) { candidateEntries = []; }
-            for (var candidateIndex = 0; candidateIndex < candidateEntries.length; candidateIndex++) {
-                if (candidateEntries[candidateIndex].id === toolCallId) {
-                    groupIndex = searchIndex;
-                    entries = candidateEntries;
-                    break;
-                }
-            }
-            if (groupIndex >= 0)
-                break;
+    function _upsertToolSnapshot(state) {
+        if (state.sessionId !== chatbot.currentSessionId) return;
+        scrollController.beforeLayout();
+        var id = state.batchId + ":tools";
+        var index = -1, entries = [];
+        for (var i = 0; i < chatModel.count; ++i) {
+            if (chatModel.get(i).messageId !== id) continue;
+            index = i;
+            try { entries = JSON.parse(chatModel.get(i).toolEntriesJson); } catch (e) {}
+            break;
         }
-        if (groupIndex < 0 && chatModel.count > 0) {
-            var last = chatModel.get(chatModel.count - 1);
-            if (last.isToolCall && last.toolEntriesJson) {
-                groupIndex = chatModel.count - 1;
-                try { entries = JSON.parse(last.toolEntriesJson); } catch (e) { entries = []; }
-            }
+        var found = false;
+        for (var j = 0; j < entries.length; ++j) {
+            if (entries[j].key !== state.key) continue;
+            entries[j] = state;
+            found = true;
+            break;
         }
-        if (groupIndex < 0) {
-            entries = [];
-            replaceThinkingOrAppend(_makeToolCardEntry("", toolState, text, rawText, isComplete, entries));
-            groupIndex = chatModel.count - 1;
-        }
-
-        var entryIndex = -1;
-        for (var i = 0; i < entries.length; i++) {
-            if (entries[i].id === toolCallId) {
-                entryIndex = i;
-                break;
-            }
-        }
-        var entry = { "id": toolCallId, "text": text || "工具调用", "raw": rawText || "",
-                      "state": toolState || "searching", "complete": !!isComplete };
-        if (entryIndex >= 0)
-            entries[entryIndex] = entry;
-        else
-            entries.push(entry);
-        _applyToolGroup(groupIndex, entries);
-    }
-
-    function updateCardByToolCallId(toolCallId, updates) {
-        for (var i = chatModel.count - 1; i >= 0; i--) {
-            var item = chatModel.get(i);
-            if (!item.isToolCall)
-                continue;
-            if (item.toolEntriesJson) {
-                var entries;
-                try { entries = JSON.parse(item.toolEntriesJson); } catch (e) { entries = []; }
-                for (var j = 0; j < entries.length; j++) {
-                    if (entries[j].id !== toolCallId)
-                        continue;
-                    if (updates.hasOwnProperty("toolState")) entries[j].state = updates.toolState;
-                    if (updates.hasOwnProperty("text")) entries[j].text = updates.text;
-                    if (updates.hasOwnProperty("raw_text")) entries[j].raw = updates.raw_text;
-                    if (updates.hasOwnProperty("isComplete")) entries[j].complete = updates.isComplete;
-                    _applyToolGroup(i, entries);
-                    return;
-                }
-            }
-            if (item.toolCallId === toolCallId) {
-                chatModel.setProperty(i, "toolState", updates.hasOwnProperty("toolState") ? updates.toolState : item.toolState);
-                chatModel.setProperty(i, "text", updates.hasOwnProperty("text") ? updates.text : item.text);
-                chatModel.setProperty(i, "raw_text", updates.hasOwnProperty("raw_text") ? updates.raw_text : item.raw_text);
-                chatModel.setProperty(i, "isComplete", updates.hasOwnProperty("isComplete") ? updates.isComplete : item.isComplete);
-                return;
-            }
-        }
+        if (!found) entries.push(state);
+        var row = _toolRow(state.batchId, entries);
+        if (index >= 0) chatModel.set(index, row);
+        else replaceThinkingOrAppend(row);
+        _scheduleScrollToBottom();
     }
 
     function _findCurrentAnswerIndex() {
@@ -592,96 +480,62 @@ YPage {
         return -1;
     }
 
-    // 把一条历史消息渲染成聊天行。
-    function _renderHistoryRow(m, idx, toolNameMap) {
-        if (m.role === 'system')
-            return;
-        if (m.role === 'tool') {
-            var toolName = toolNameMap[m.toolCallId] || "";
-            var label = toolName === "shell_exec" ? "命令执行结果" : "搜索结果";
-            _upsertToolEntry(m.toolCallId || "", label, m.content, "done", true);
-            if (chatModel.count > 0)
-                chatModel.setProperty(chatModel.count - 1, "historyIndex", idx);
-            return;
+    function _historyRows(history) {
+        var rows = [], states = chatbot.toolStates || [], groups = {}, emitted = {};
+        for (var t = 0; t < states.length; ++t) {
+            var st = states[t];
+            if (!groups[st.batchId]) groups[st.batchId] = [];
+            groups[st.batchId].push(st);
         }
-        if (m.role === 'assistant' && m.reasoning) {
-            chatModel.append(_makeReasoningEntry(m.reasoning));
-            chatModel.setProperty(chatModel.count - 1, "isComplete", true);
+        function group(id, idx) {
+            if (!groups[id] || emitted[id]) return;
+            var row = _toolRow(id, groups[id]);
+            row.historyIndex = idx;
+            rows.push(row);
+            emitted[id] = true;
         }
-        if (m.role === 'assistant' && m.toolCallsJson && m.toolCallsJson !== "") {
-            if (!m.content || m.content.trim() === "")
-                return;
-        }
-        var isUser = m.role === 'user';
-        var messageAttachments = [];
-        var messageParts = m.parts || [];
-        for (var partIndex = 0; partIndex < messageParts.length; partIndex++) {
-            if (messageParts[partIndex].type === "image_url" || messageParts[partIndex].type === "file")
-                messageAttachments.push(messageParts[partIndex]);
-        }
-        chatModel.append({
-            "text": isUser ? m.content : "",
-            "attachmentsJson": JSON.stringify(messageAttachments),
-            "isUser": isUser,
-            "raw_text": m.content,
-            "reasoning_text": "",
-            "isComplete": true,
-            "isThinking": false,
-            "isToolCall": false,
-            "toolCallId": "",
-            "toolState": "",
-            "historyIndex": idx
-        });
-    }
-
-    function _buildToolNameMap(history, fromIndex) {
-        var map = {};
-        for (var i = fromIndex; i < history.length; i++) {
-            var msg = history[i];
-            if (msg.role !== 'assistant' || !msg.toolCallsJson)
-                continue;
-            try {
-                var tcs = JSON.parse(msg.toolCallsJson);
-                for (var k = 0; k < tcs.length; k++) {
-                    if (tcs[k].id && tcs[k]["function"] && tcs[k]["function"].name)
-                        map[tcs[k].id] = tcs[k]["function"].name;
+        for (var i = 0; i < history.length; ++i) {
+            var m = history[i], id = m.messageId;
+            if (m.role === "system") continue;
+            if (m.role === "tool") continue;
+            if (m.reasoning) {
+                var reasoning = _makeReasoningEntry(m.reasoning);
+                reasoning.messageId = id + ":reasoning";
+                reasoning.isComplete = true;
+                rows.push(reasoning);
+            }
+            var attachments = (m.parts || []).filter(function (p) { return p.type === "image_url" || p.type === "file"; });
+            if (m.role === "user" || m.content || attachments.length) {
+                rows.push({messageId: id + (m.role === "user" ? ":user" : ":answer"),
+                           text: m.role === "user" ? m.content : "", raw_text: m.content || "", reasoning_text: "",
+                           attachmentsJson: JSON.stringify(attachments), isUser: m.role === "user", isComplete: true,
+                           isThinking: false, isReasoning: false, isToolCall: false,
+                           toolCallId: "", toolState: "", historyIndex: i});
+            }
+            group(id, i);
+            // Old sessions have no snapshots. Preserve an unresolved status rather
+            // than presenting an unrecorded outcome as a successful execution.
+            if (m.toolCallsJson && !groups[id]) {
+                var calls = [];
+                try { calls = JSON.parse(m.toolCallsJson); } catch (e) {}
+                var legacy = [];
+                for (var c = 0; c < calls.length; ++c) {
+                    var result = "调用结果未知", status = "error";
+                    for (var k = i + 1; k < history.length && history[k].role === "tool"; ++k) {
+                        if (history[k].toolCallId !== calls[c].id) continue;
+                        result = history[k].content;
+                        // Old files never recorded success; leave that uncertainty visible.
+                        if (/取消|中断|拒绝/.test(result)) status = "cancelled";
+                    }
+                    legacy.push({key: id + ":tool:" + c, callId: calls[c].id, state: status,
+                                 text: "历史工具调用（" + (status === "cancelled" ? "已取消" : "状态未记录") + "）",
+                                 result: result});
                 }
-            } catch (e) {}
-        }
-        return map;
-    }
-
-    // 生成这一轮消息的行签名，用于和屏幕上的行比对。
-    function _turnSignatureFromHistory(history, historyStart) {
-        var parts = [];
-        for (var idx = historyStart; idx < history.length; idx++) {
-            var m = history[idx];
-            if (m.role === 'system')
-                continue;
-            if (m.role === 'tool') {
-                parts.push("T");
-                continue;
+                if (legacy.length) { var old = _toolRow(id, legacy); old.historyIndex = i; rows.push(old); }
             }
-            if (m.role === 'assistant' && m.reasoning)
-                parts.push("R:" + m.reasoning);
-            if (m.role === 'assistant' && m.toolCallsJson && m.toolCallsJson !== "") {
-                if (!m.content || m.content.trim() === "")
-                    continue;
-            }
-            parts.push((m.role === 'user' ? "U:" : "A:") + (m.content || ""));
         }
-        return parts.join("\u0001");
-    }
-
-    function _turnSignatureFromModel(modelStart) {
-        var parts = [];
-        for (var i = modelStart; i < chatModel.count; i++) {
-            var row = chatModel.get(i);
-            var kind = row.isUser ? "U:" : row.isToolCall ? "T" : row.isReasoning ? "R:" : "A:";
-            var text = row.isToolCall ? "" : (row.raw_text || "");
-            parts.push(kind + text + (row.isComplete ? "" : "\u0002"));
-        }
-        return parts.join("\u0001");
+        for (var batch in groups) group(batch, -1);
+        return rows;
     }
 
     // 气泡行的图片附件要在后端落盘后换成带 localPath 的那一份，点开查看器靠它。
@@ -729,54 +583,34 @@ YPage {
         _pendingAttachmentRow = -1;
     }
 
-    // 以落库的历史为准，不一致时重建这一轮的行。
     function _rebuildCurrentTurnRows() {
-        if (!chatbot || !chatbot.messages)
-            return;
-        var history = chatbot.messages;
-        if (history.length === 0)
-            return;
-
-        var historyStart = -1;
-        for (var i = history.length - 1; i >= 0; i--) {
-            if (history[i].role === 'user') {
-                historyStart = i;
-                break;
+        if (!chatbot) return;
+        var rows = _historyRows(chatbot.messages);
+        scrollController.beforeLayout();
+        for (var i = 0; i < rows.length; ++i) {
+            var row = rows[i], found = -1;
+            for (var j = i; j < chatModel.count; ++j) {
+                if (chatModel.get(j).messageId === row.messageId) { found = j; break; }
             }
-        }
-        if (historyStart < 0)
-            return;
-
-        var modelStart = -1;
-        for (var j = chatModel.count - 1; j >= 0; j--) {
-            if (chatModel.get(j).isUser) {
-                modelStart = j;
-                break;
+            // Adopt the locally inserted user row once the backend saves it.
+            if (found < 0 && row.isUser) {
+                for (var u = i; u < chatModel.count; ++u) {
+                    var candidate = chatModel.get(u);
+                    if (candidate.isUser && !candidate.messageId && candidate.raw_text === row.raw_text) { found = u; break; }
+                }
             }
+            if (found >= 0) {
+                if (found !== i) chatModel.move(found, i, 1);
+                // Avoid touching unchanged roles: this preserves delegates and layout versions.
+                for (var role in row)
+                    if (chatModel.get(i)[role] !== row[role]) chatModel.setProperty(i, role, row[role]);
+            } else chatModel.insert(i, row);
         }
-        if (modelStart < 0)
-            return;
-
-        if (_turnSignatureFromHistory(history, historyStart) === _turnSignatureFromModel(modelStart))
-            return;
-
-        var toolNameMap = _buildToolNameMap(history, historyStart);
-        // 整轮重建会让列表高度先塌再涨，用户正在看历史时先记下位置再还原。
-        var keepReadingPosition = id_chat_listview.userScrolledUp;
-        if (keepReadingPosition)
-            id_chat_listview.captureReadAnchor();
-        var removed = chatModel.count - modelStart;
-        if (removed > 0)
-            chatModel.remove(modelStart, removed);
-        for (var idx = historyStart; idx < history.length; idx++)
-            _renderHistoryRow(history[idx], idx, toolNameMap);
-        if (keepReadingPosition) {
-            id_chat_listview.forceLayout();
-            // 先同步还原一次：重建过程中列表会把视口钳到底部，晚一帧才还原会被看见
-            id_chat_listview.restoreReadAnchor();
-            id_read_anchor_timer.hold();
-        }
-        _scheduleScrollToBottom();
+        // The projection includes every live tool snapshot, including calls which
+        // have not written their API result yet. Only obsolete rows are removed.
+        if (chatModel.count > rows.length) chatModel.remove(rows.length, chatModel.count - rows.length);
+        id_chat_listview.forceLayout();
+        scrollController.schedule();
     }
 
     function _resetStreamState() {
@@ -846,27 +680,10 @@ YPage {
         return index;
     }
 
-    function _followLatestMessage() {
-        _followAttempts = 0;
-        _followStableFrames = 0;
-        _followLastContentHeight = -1;
-        id_chat_listview.userScrolledUp = false;
-        id_chat_listview.showScrollToBottom = false;
-        id_chat_listview.scrollToBottom();
-        id_follow_latest_timer.restart();
-    }
+    function _followLatestMessage() { scrollController.follow(); }
 
     function _scheduleScrollToBottom() {
-        // 用户手动滚动时不自动贴底。
-        if (id_chat_listview.userScrolledUp || id_chat_listview.userInteracting)
-            return;
-        if (streamThrottle.scrollScheduled)
-            return;
-        streamThrottle.scrollScheduled = true;
-        Qt.callLater(function () {
-            streamThrottle.scrollScheduled = false;
-            id_chat_listview.autoFollowBottom();
-        });
+        scrollController.schedule();
     }
 
     function _prepareSessionChange() {
@@ -941,10 +758,8 @@ YPage {
         chatModel.clear();
         if (!chatbot || !chatbot.messages)
             return;
-        var history = chatbot.messages;
-        var toolNameMap = _buildToolNameMap(history, 0);
-        for (var idx = 0; idx < history.length; idx++)
-            _renderHistoryRow(history[idx], idx, toolNameMap);
+        var rows = _historyRows(chatbot.messages);
+        for (var idx = 0; idx < rows.length; idx++) chatModel.append(rows[idx]);
         _layoutStabilizing = true;
         id_chat_listview.forceLayout();
         id_chat_listview.scrollToTop();
@@ -1235,58 +1050,15 @@ YPage {
     }
 
     function _syncHistoryIndices() {
-        if (!chatbot || !chatbot.messages)
-            return;
-
         var history = chatbot.messages;
-        var cursor = 0;
-
-        function consumeToolTurn() {
-            var start = cursor;
-            if (cursor < history.length && history[cursor].role === "assistant"
-                    && history[cursor].toolCallsJson) {
-                cursor++;
+        for (var r = 0; r < chatModel.count; ++r) {
+            var row = chatModel.get(r), idx = -1;
+            for (var i = 0; i < history.length; ++i) {
+                if (row.messageId === history[i].messageId + ":user"
+                    || row.messageId === history[i].messageId + ":answer"
+                    || row.messageId === history[i].messageId + ":tools") { idx = i; break; }
             }
-            while (cursor < history.length && history[cursor].role === "tool")
-                cursor++;
-            return cursor > start ? start : -1;
-        }
-
-        function consumeMessage(role) {
-            while (cursor < history.length) {
-                var message = history[cursor];
-                if (message.role === role) {
-                    var index = cursor;
-                    cursor++;
-                    return index;
-                }
-                if (message.role === "assistant" && message.toolCallsJson) {
-                    consumeToolTurn();
-                    continue;
-                }
-                if (message.role === "tool") {
-                    cursor++;
-                    continue;
-                }
-                cursor++;
-            }
-            return -1;
-        }
-
-        for (var rowIndex = 0; rowIndex < chatModel.count; rowIndex++) {
-            var row = chatModel.get(rowIndex);
-            var historyIndex = -1;
-            if (row.isReasoning || row.isThinking) {
-                historyIndex = -1;
-            } else if (row.isToolCall) {
-                historyIndex = consumeToolTurn();
-            } else if (row.isUser) {
-                historyIndex = consumeMessage("user");
-            } else {
-                historyIndex = consumeMessage("assistant");
-            }
-            if (row.historyIndex !== historyIndex)
-                chatModel.setProperty(rowIndex, "historyIndex", historyIndex);
+            if (row.historyIndex !== idx) chatModel.setProperty(r, "historyIndex", idx);
         }
     }
 
@@ -1365,18 +1137,9 @@ YPage {
     function navigateToMessageIndex(msgIndex) {
         if (msgIndex < 0 || msgIndex >= chatModel.count)
             return;
-        id_navigation_target_expiry_timer.stop();
-        id_message_jump_timer.stop();
-        _pendingJumpIndex = msgIndex;
-        _navigationTargetIndex = msgIndex;
-        _navigationJumping = true;
-        _jumpAttempts = 0;
-        _jumpStableFrames = 0;
         id_chat_listview.currentIndex = msgIndex;
-        id_chat_listview._programmaticScroll = true;
-        id_chat_listview.positionViewAtIndex(msgIndex, ListView.Beginning);
-        id_chat_listview._programmaticScroll = false;
-        id_message_jump_timer.restart();
+        scrollController.locate(msgIndex);
+        highlightTimer.restart();
     }
 
     function editMessage(index) {
@@ -1516,7 +1279,7 @@ YPage {
                 spacing: 10
                 // 缓存约 4 屏，避免常驻 delegate 过多。
                 cacheBuffer: Math.min(1200, Math.max(600, Math.round(height * 4)))
-                reuseItems: true
+                reuseItems: false
                 boundsBehavior: Flickable.StopAtBounds
 
                 add: Transition {
@@ -1528,36 +1291,10 @@ YPage {
                         duration: 150
                     }
                 }
-                displaced: Transition {
-                    enabled: !id_chat_assistant_page.isGenerating && !id_chat_assistant_page._layoutStabilizing
-                    NumberAnimation {
-                        properties: "y"
-                        duration: 150
-                        easing.type: Easing.OutCubic
-                    }
-                }
-
-                property bool userScrolledUp: false
-                // 是否显示「滑到底部」按钮。
-                property bool showScrollToBottom: false
-                property bool _programmaticScroll: false
-                property bool _flicking: false
-                // 用户是否正在拖动或滑动列表。
+                readonly property bool userScrolledUp: scrollController.mode !== "following"
+                property bool showScrollToBottom: userScrolledUp
                 readonly property bool userInteracting: dragging || flicking
-                readonly property real bottomThreshold: 50
-                // 显示按钮的离底距离阈值。
-                readonly property real scrollHintDistance: Math.max(height * 1.2, 120)
-                // 显示按钮的最小滑动速度（px/ms）。
-                readonly property real scrollHintVelocity: 0.5
-                property real _lastTrackedContentY: 0
-                property double _lastTrackedTime: 0
-                // 手势开始时只记录速度基准。
-                property bool _trackingFresh: true
-
-                // ── 阅读位置锚定 ──
-                // 公式异步出图，成文后高度还会变很多次：用户不在底部时让视口顶部那条消息停在原处。
-                property int _readAnchorIndex: -1
-                property real _readAnchorOffset: 0
+                readonly property real bottomThreshold: 2
 
                 // 顶部可能落在消息之间的间隙里，故按几个探针点找首条消息，都取不到就退回视口中线；
                 // 否则锚点失效后视口只能被边界钳制，看起来就像被拽回底部。
@@ -1571,203 +1308,15 @@ YPage {
                     return indexAt(width / 2, contentY + height / 2);
                 }
 
-                function captureReadAnchor() {
-                    if (moving || !userScrolledUp) {
-                        _readAnchorIndex = -1;
-                        return;
-                    }
-                    var index = probeViewportIndex();
-                    if (index < 0) {
-                        _readAnchorIndex = -1;
-                        return;
-                    }
-                    var item = itemAtIndex(index);
-                    if (!item) {
-                        _readAnchorIndex = -1;
-                        return;
-                    }
-                    _readAnchorIndex = index;
-                    _readAnchorOffset = item.y - contentY;
-                }
-
-                // 返回 false 表示锚点已经失效，调用方需要重新采集。
-                function restoreReadAnchor() {
-                    if (_readAnchorIndex < 0 || moving || !userScrolledUp)
-                        return false;
-
-                    var maxY = Math.max(originY, originY + contentHeight - height);
-                    var item = itemAtIndex(_readAnchorIndex);
-                    if (!item && _readAnchorIndex < count) {
-                        // 目标消息不在缓存里（内容收缩后列表把视口钳到底部就会这样，那正是
-                        // "突然跳到最底下"的来源）：用 positionViewAtIndex 按模型定位并建出委托。
-                        _programmaticScroll = true;
-                        positionViewAtIndex(_readAnchorIndex, ListView.Beginning);
-                        _programmaticScroll = false;
-                        item = itemAtIndex(_readAnchorIndex);
-                    }
-                    if (!item)
-                        return false;
-
-                    var targetY = Math.max(originY, Math.min(item.y - _readAnchorOffset, maxY));
-                    if (Math.abs(targetY - contentY) > 0.5) {
-                        _programmaticScroll = true;
-                        contentY = targetY;
-                        _programmaticScroll = false;
-                    }
-                    return true;
-                }
-
-                onMovementStarted: {
-                    // 只处理真实手势产生的滚动。
-                    if (!dragging && !flicking)
-                        return;
-
-                    _flicking = true;
-                    id_bottom_scroll_animation.stop();
-                    id_read_anchor_timer.stop();
-                    _programmaticScroll = false;
-                    if (id_rich_content_anchor_timer.running)
-                        id_rich_content_anchor_timer.stop();
-                    if (id_follow_latest_timer.running)
-                        id_follow_latest_timer.stop();
-                    if (_navigationTargetIndex >= 0) {
-                        _navigationTargetIndex = -1;
-                        _navigationJumping = false;
-                        _pendingJumpIndex = -1;
-                        id_navigation_target_expiry_timer.stop();
-                    }
-                    if (_layoutStabilizing) {
-                        _layoutStabilizing = false;
-                        id_layout_stabilize_timer.stop();
-                    }
-                    _lastTrackedContentY = contentY;
-                    _lastTrackedTime = Date.now();
-                    _trackingFresh = true;
-                }
-                onMovementEnded: {
-                    _flicking = false;
-                    updateUserScrolledState();
-                    // 手势结束时记下阅读位置，之后的异步高度变化都围着它还原。
-                    captureReadAnchor();
-                    id_list_bounds_guard_timer.restart();
-                }
-                onContentYChanged: {
-                    if (_programmaticScroll)
-                        return;
-                    // 只在真实手势下取消导航跳转。
-                    if (id_chat_assistant_page._navigationTargetIndex >= 0 && (_flicking || dragging)) {
-                        id_chat_assistant_page._navigationTargetIndex = -1;
-                        id_chat_assistant_page._navigationJumping = false;
-                        id_chat_assistant_page._pendingJumpIndex = -1;
-                        id_message_jump_timer.stop();
-                    }
-                    // 只跟踪真实手势的位移。
-                    if (!_flicking && !dragging)
-                        return;
-                    trackScrollDirection();
-                }
-
-                function updateUserScrolledState() {
-                    var distToEnd = contentHeight - contentY - height;
-                    userScrolledUp = distToEnd > bottomThreshold;
-                    if (!userScrolledUp)
-                        showScrollToBottom = false;
-                }
-
-                // 按 contentY 的方向与速度决定按钮显隐。
-                function trackScrollDirection() {
-                    var now = Date.now();
-                    var distToEnd = contentHeight - contentY - height;
-                    userScrolledUp = distToEnd > bottomThreshold;
-                    if (!userScrolledUp) {
-                        showScrollToBottom = false;
-                        _trackingFresh = true;
-                        return;
-                    }
-
-                    if (_trackingFresh) {
-                        _trackingFresh = false;
-                        _lastTrackedContentY = contentY;
-                        _lastTrackedTime = now;
-                        return;
-                    }
-
-                    // 采样间隔不足时先跳过本次计算。
-                    var dt = now - _lastTrackedTime;
-                    if (dt < 48)
-                        return;
-
-                    var dy = contentY - _lastTrackedContentY;
-                    _lastTrackedContentY = contentY;
-                    _lastTrackedTime = now;
-
-                    if (dy < -1) {
-                        // 往历史方向滑动时收起按钮。
-                        showScrollToBottom = false;
-                        return;
-                    }
-                    if (dy > 1 && distToEnd > scrollHintDistance && (dy / dt) >= scrollHintVelocity)
-                        showScrollToBottom = true;
-                }
-
-                function scrollToTop() {
-                    id_bottom_scroll_animation.stop();
-                    _programmaticScroll = true;
-                    positionViewAtBeginning();
-                    _programmaticScroll = false;
-                    userScrolledUp = false;
-                    showScrollToBottom = false;
-                }
-
-                // 流式回复时自动贴底。
-                function autoFollowBottom() {
-                    if (userScrolledUp || userInteracting)
-                        return;
-                    id_bottom_scroll_animation.stop();
-                    _programmaticScroll = true;
-                    positionViewAtEnd();
-                    _programmaticScroll = false;
-                }
-
-                // 用户主动跳到底部。
-                function scrollToBottom(animated) {
-                    id_bottom_scroll_animation.stop();
-                    var targetY = Math.max(originY, originY + contentHeight - height);
-                    if (animated && Math.abs(targetY - contentY) > 1) {
-                        _programmaticScroll = true;
-                        id_bottom_scroll_animation.from = contentY;
-                        id_bottom_scroll_animation.to = targetY;
-                        id_bottom_scroll_animation.start();
-                    } else {
-                        _programmaticScroll = true;
-                        positionViewAtEnd();
-                        _programmaticScroll = false;
-                    }
-                    userScrolledUp = false;
-                    showScrollToBottom = false;
-                }
-
-                NumberAnimation {
-                    id: id_bottom_scroll_animation
-                    target: id_chat_listview
-                    property: "contentY"
-                    duration: 90
-                    easing.type: Easing.OutQuad
-                    onStopped: id_chat_listview._programmaticScroll = false
-                }
-
-                onContentHeightChanged: {
-                    if (_layoutStabilizing)
-                        id_layout_stabilize_timer.restart();
-                    // 内容高度变化（公式出图、流式增长、整轮重建）时用户不在底部就按锚点还原，不交给边界钳制。
-                    if (!moving && userScrolledUp) {
-                        if (!restoreReadAnchor())
-                            captureReadAnchor();
-                        id_read_anchor_timer.hold();
-                    } else if (!moving && !id_rich_content_anchor_timer.running) {
-                        id_list_bounds_guard_timer.restart();
-                    }
-                }
+                function captureReadAnchor() { scrollController.capture(); }
+                function restoreReadAnchor() { return scrollController.apply(); }
+                function scrollToTop() { scrollController.locate(0); }
+                function autoFollowBottom() { scrollController.schedule(); }
+                function scrollToBottom(animated) { scrollController.follow(); }
+                onDraggingChanged: { if (dragging) scrollController.gestureStarted(); }
+                onMovementStarted: { if (dragging || flicking) scrollController.gestureStarted(); }
+                onMovementEnded: scrollController.gestureEnded()
+                onContentHeightChanged: scrollController.schedule()
 
                 header: Item {
                     width: id_chat_listview.width
@@ -1810,6 +1359,8 @@ YPage {
                 }
 
                 delegate: MessageDelegate {
+                    messageId: model.messageId || "local:" + model.index
+                    sessionId: chatbot.currentSessionId
                     text: model.text
                     rawText: model.raw_text
                     reasoningText: model.reasoning_text || ""
@@ -1825,7 +1376,7 @@ YPage {
                     renderMode: chatbot.bubbleRenderMode
                     listMoving: id_chat_listview.moving
                     listScrolledUp: id_chat_listview.userScrolledUp
-                    navigationJumping: id_chat_assistant_page._navigationJumping
+                    navigationJumping: false
                     messageIndex: model.index
                     listWidth: id_chat_listview.width
                     listContentY: id_chat_listview.contentY
@@ -1846,22 +1397,8 @@ YPage {
                                 toastBanner.error("文本附件不可用");
                         }
                     }
-                    onToolCardExpansionStarted: {
-                        if (expanding)
-                            id_tool_expansion_anchor_timer.preserveViewport();
-                    }
-                    onRichContentCommitStarted: function (itemY) {
-                        if (id_chat_assistant_page._navigationTargetIndex >= 0) {
-                            id_chat_assistant_page._pendingJumpIndex = id_chat_assistant_page._navigationTargetIndex;
-                            id_chat_assistant_page._jumpAttempts = 0;
-                            id_chat_assistant_page._jumpStableFrames = 0;
-                            id_chat_assistant_page._navigationJumping = true;
-                            id_navigation_target_expiry_timer.stop();
-                            id_message_jump_timer.restart();
-                        } else {
-                            id_chat_assistant_page._beginRichContentCommit();
-                        }
-                    }
+                    onToolCardExpansionStarted: scrollController.beforeLayout()
+                    onRichContentCommitStarted: scrollController.beforeLayout()
                 }
             }
         }
@@ -2151,214 +1688,9 @@ YPage {
     }
 
     Timer {
-        id: id_navigation_target_expiry_timer
-        interval: 1200
-        repeat: false
-        onTriggered: {
-            _navigationTargetIndex = -1;
-            _navigationJumping = false;
-            _pendingJumpIndex = -1;
-            id_message_jump_timer.stop();
-        }
-    }
-
-    Timer {
         id: highlightTimer
         interval: 1500
-        repeat: false
         onTriggered: id_chat_listview.currentIndex = -1
-    }
-
-    Timer {
-        id: id_rich_content_anchor_timer
-        property int anchorIndex: -1
-        property real anchorOffset: 0
-        property bool pinBottom: false
-        property int ticks: 0
-        property int stableFrames: 0
-        property real lastContentHeight: -1
-        interval: 16
-        repeat: true
-
-        function beginTracking() {
-            ticks = 0;
-            stableFrames = 0;
-            lastContentHeight = -1;
-            restart();
-        }
-
-        onTriggered: {
-            if (id_chat_listview.moving) {
-                stop();
-                anchorIndex = -1;
-                return;
-            }
-            var minY = id_chat_listview.originY;
-            var maxY = Math.max(minY, minY + id_chat_listview.contentHeight - id_chat_listview.height);
-            var currentY = isFinite(id_chat_listview.contentY) ? id_chat_listview.contentY : minY;
-            var targetY = Math.max(minY, Math.min(currentY, maxY));
-            if (pinBottom) {
-                targetY = maxY;
-            } else if (anchorIndex >= 0) {
-                var anchorItem = id_chat_listview.itemAtIndex(anchorIndex);
-                if (anchorItem)
-                    targetY = Math.max(minY, Math.min(anchorItem.y - anchorOffset, maxY));
-            }
-            id_chat_listview._programmaticScroll = true;
-            id_chat_listview.contentY = targetY;
-            id_chat_listview._programmaticScroll = false;
-
-            var currentHeight = id_chat_listview.contentHeight;
-            if (lastContentHeight >= 0 && Math.abs(currentHeight - lastContentHeight) <= 1)
-                stableFrames++;
-            else
-                stableFrames = 0;
-            lastContentHeight = currentHeight;
-            ticks++;
-            if ((ticks >= 10 && stableFrames >= 3) || ticks >= 30) {
-                stop();
-                anchorIndex = -1;
-                id_list_bounds_guard_timer.restart();
-            }
-        }
-    }
-
-    Timer {
-        id: id_list_bounds_guard_timer
-        interval: 0
-        repeat: false
-        onTriggered: {
-            if (id_chat_listview.moving || id_rich_content_anchor_timer.running)
-                return;
-            // 用户不在底部时只还原阅读位置：内容高度收缩时直接钳制 contentY 会把视口掼到底部。
-            if (id_chat_listview.userScrolledUp && id_chat_listview.restoreReadAnchor())
-                return;
-            // 只把 contentY 夹回边界，不做强排。
-            var minY = id_chat_listview.originY;
-            var maxY = Math.max(minY, minY + id_chat_listview.contentHeight - id_chat_listview.height);
-            var currentY = isFinite(id_chat_listview.contentY) ? id_chat_listview.contentY : minY;
-            var boundedY = Math.max(minY, Math.min(currentY, maxY));
-            if (!isFinite(id_chat_listview.contentY) || Math.abs(boundedY - id_chat_listview.contentY) > 0.5) {
-                id_chat_listview._programmaticScroll = true;
-                id_chat_listview.contentY = boundedY;
-                id_chat_listview._programmaticScroll = false;
-            }
-            id_chat_listview.returnToBounds();
-        }
-    }
-
-    // 内容高度连续变化（公式陆续出图）时按锚点还原几帧，等高度稳定后重新采集锚点。
-    Timer {
-        id: id_read_anchor_timer
-        interval: 16
-        repeat: true
-        property int ticks: 0
-
-        function hold() {
-            ticks = 0;
-            if (!running)
-                restart();
-        }
-
-        onTriggered: {
-            ticks++;
-            var restored = id_chat_listview.restoreReadAnchor();
-            if (!restored || id_chat_listview.moving || ticks >= 10) {
-                stop();
-                id_chat_listview.captureReadAnchor();
-                id_list_bounds_guard_timer.restart();
-            }
-        }
-    }
-
-    Timer {
-        id: id_tool_expansion_anchor_timer
-        property real anchorContentY: 0
-        property int ticks: 0
-        interval: 20
-        repeat: true
-
-        function preserveViewport() {
-            anchorContentY = id_chat_listview.contentY;
-            ticks = 0;
-            restart();
-        }
-
-        onTriggered: {
-            if (ticks === 0)
-                id_chat_listview.forceLayout();
-            var maxY = Math.max(id_chat_listview.originY,
-                                id_chat_listview.originY + id_chat_listview.contentHeight - id_chat_listview.height);
-            id_chat_listview._programmaticScroll = true;
-            id_chat_listview.contentY = Math.max(id_chat_listview.originY, Math.min(anchorContentY, maxY));
-            id_chat_listview._programmaticScroll = false;
-            ticks++;
-            if (ticks >= 10)
-                stop();
-        }
-    }
-
-    Timer {
-        id: id_follow_latest_timer
-        interval: 40
-        repeat: true
-        onTriggered: {
-            // 用户已手动滚动时停止自动跟随。
-            if (id_chat_listview.userScrolledUp || id_chat_listview.userInteracting) {
-                stop();
-                return;
-            }
-            id_chat_listview.autoFollowBottom();
-            _followAttempts++;
-
-            var sameHeight = Math.abs(id_chat_listview.contentHeight - _followLastContentHeight) <= 1;
-            var targetY = Math.max(id_chat_listview.originY,
-                                   id_chat_listview.originY + id_chat_listview.contentHeight - id_chat_listview.height);
-            var atBottom = Math.abs(targetY - id_chat_listview.contentY) <= 1;
-            _followStableFrames = sameHeight && atBottom ? _followStableFrames + 1 : 0;
-            _followLastContentHeight = id_chat_listview.contentHeight;
-            if ((_followAttempts >= 6 && _followStableFrames >= 3) || _followAttempts >= 12)
-                stop();
-        }
-    }
-
-    Timer {
-        id: id_message_jump_timer
-        interval: 20
-        repeat: true
-        onTriggered: {
-            var index = _pendingJumpIndex;
-            if (index < 0 || index >= chatModel.count) {
-                stop();
-                _pendingJumpIndex = -1;
-                _navigationTargetIndex = -1;
-                _navigationJumping = false;
-                return;
-            }
-
-            id_chat_listview.forceLayout();
-            id_chat_listview._programmaticScroll = true;
-            id_chat_listview.positionViewAtIndex(index, ListView.Beginning);
-            id_chat_listview._programmaticScroll = false;
-            _jumpAttempts++;
-
-            var targetItem = id_chat_listview.itemAtIndex(index);
-            var expectedY = targetItem !== null
-                          ? ChatNavigation.clampedTargetY(id_chat_listview.originY,
-                                                          id_chat_listview.contentHeight,
-                                                          id_chat_listview.height,
-                                                          targetItem.y)
-                          : id_chat_listview.originY;
-            var aligned = targetItem !== null && Math.abs(expectedY - id_chat_listview.contentY) <= 1;
-            _jumpStableFrames = aligned ? _jumpStableFrames + 1 : 0;
-            if (_jumpStableFrames >= 2 || _jumpAttempts >= 40) {
-                stop();
-                _pendingJumpIndex = -1;
-                _navigationJumping = false;
-                id_navigation_target_expiry_timer.restart();
-                highlightTimer.restart();
-            }
-        }
     }
 
     Timer {
@@ -2378,7 +1710,7 @@ YPage {
         onTriggered: {
             if (_layoutStabilizing) {
                 id_chat_listview.forceLayout();
-                id_chat_listview.scrollToTop();
+                scrollController.schedule();
                 _layoutStabilizing = false;
             }
         }
@@ -2588,8 +1920,25 @@ YPage {
         function onStreamStart() {
             _toolCallActive = false;
             _resetStreamState();
+            var last = chatModel.count - 1;
+            if (last >= 0 && chatModel.get(last).isThinking)
+                chatModel.setProperty(last, "messageId", chatbot.responseMessageId + ":answer");
         }
         function onMessagesChanged() {
+            // Backend saves the user row synchronously before streamStart.
+            // Give the provisional row its identity before any tools or replies arrive.
+            var history = chatbot.messages;
+            for (var h = history.length - 1; h >= 0; --h) {
+                if (history[h].role !== "user") continue;
+                for (var r = chatModel.count - 1; r >= 0; --r) {
+                    var row = chatModel.get(r);
+                    if (!row.isUser) continue;
+                    if (!row.messageId && row.raw_text === history[h].content)
+                        chatModel.setProperty(r, "messageId", history[h].messageId + ":user");
+                    break;
+                }
+                break;
+            }
             _syncHistoryIndices();
             // 后端落盘图片附件后走这个信号，借它把气泡里那一行的 localPath 补上。
             _adoptPersistedAttachments();
@@ -2637,6 +1986,7 @@ YPage {
             _resetStreamState();
             _preparingSend = false;
             _toolCallActive = false;
+            shellConfirmDialog.clear();
             toastBanner.error(error, 8000);
             var lastIndex = chatModel.count - 1;
             if (lastIndex >= 0 && chatModel.get(lastIndex).isThinking)
@@ -2644,66 +1994,21 @@ YPage {
             id_chat_assistant_page.isGenerating = false;
             Qt.callLater(consumePendingVoiceChat);
         }
-        function onToolCallProgress(text, isComplete) {
-            generationDoneTimer.stop();
-            _completeLastReasoningCard();
-            _toolCallActive = !isComplete;
-            finalizeLastAssistantIfNeeded();
-            _upsertToolEntry("__server__", text, "", isComplete ? "done" : "searching", isComplete);
-        }
-        function onToolCallReceived(toolCallsJson) {
+        function onToolStateChanged(state) {
             generationDoneTimer.stop();
             _completeLastReasoningCard();
             finalizeLastAssistantIfNeeded();
-            var lastIndex = chatModel.count - 1;
-            if (lastIndex >= 0 && chatModel.get(lastIndex).isThinking)
-                chatModel.remove(lastIndex);
-        }
-        function onWebSearchStarted(toolCallId, query) {
-            generationDoneTimer.stop();
-            _toolCallActive = true;
-            id_chat_assistant_page.isGenerating = true;
-            finalizeLastAssistantIfNeeded();
-            _upsertToolEntry(toolCallId, "正在搜索：" + query, "", "searching", false);
-            Qt.callLater(function () {
-                id_chat_listview.scrollToBottom();
+            _upsertToolSnapshot(state);
+            _toolCallActive = (chatbot.toolStates || []).some(function (s) {
+                return s.state !== "done" && s.state !== "error" && s.state !== "cancelled";
             });
         }
-        function onWebSearchFinished(toolCallId, success, summary, resultText) {
-            updateCardByToolCallId(toolCallId, {
-                "text": success ? "已完成搜索：" + summary : "搜索失败：" + summary,
-                "raw_text": resultText,
-                "toolState": success ? "done" : "error",
-                "isComplete": true
-            });
-        }
+        function onToolCallProgress(text, isComplete) {}
+        function onToolCallReceived(toolCallsJson) { generationDoneTimer.stop(); }
         function onShellCommandPending(toolCallId, command) {
-            generationDoneTimer.stop();
-            _toolCallActive = true;
-            id_chat_assistant_page.isGenerating = true;
-            finalizeLastAssistantIfNeeded();
-            _upsertToolEntry(toolCallId, "请求执行：" + command, command, "pending", false);
-            Qt.callLater(function () {
-                id_chat_listview.scrollToBottom();
-            });
             shellConfirmDialog.show(toolCallId, command);
         }
-        function onShellCommandStarted(toolCallId, command) {
-            _toolCallActive = true;
-            id_chat_assistant_page.isGenerating = true;
-            updateCardByToolCallId(toolCallId, {
-                "text": "正在执行...",
-                "toolState": "searching"
-            });
-        }
-        function onShellCommandFinished(toolCallId, success, summary, resultText) {
-            updateCardByToolCallId(toolCallId, {
-                "text": success ? "执行完成" : "执行失败：" + summary,
-                "raw_text": resultText,
-                "toolState": success ? "done" : "error",
-                "isComplete": true
-            });
-        }
+
         function onToolBatchFlushed() {
             generationDoneTimer.stop();
             chatModel.append({
@@ -2717,14 +2022,14 @@ YPage {
                 "toolState": "",
                 "historyIndex": -1
             });
-            Qt.callLater(function () {
-                id_chat_listview.scrollToBottom();
-            });
+            _scheduleScrollToBottom();
         }
         function onRequestCancelled() {
             _completeLastReasoningCard();
             _resetStreamState();
             _toolCallActive = false;
+            shellConfirmDialog.clear();
+            _flushStreamBuffer();
             _attachmentReadSeq++;
             _preparingSend = false;
             var removeIndices = [];
@@ -2734,16 +2039,11 @@ YPage {
                     removeIndices.push(i);
                     continue;
                 }
-                if (item.isToolCall && !item.isComplete) {
-                    updateCardByToolCallId(item.toolCallId, {
-                        "text": "已取消",
-                        "toolState": "error",
-                        "isComplete": true
-                    });
-                }
+
             }
             for (var ri = 0; ri < removeIndices.length; ri++)
                 chatModel.remove(removeIndices[ri]);
+            _rebuildCurrentTurnRows();
             id_chat_assistant_page.isGenerating = false;
             Qt.callLater(consumePendingVoiceChat);
         }

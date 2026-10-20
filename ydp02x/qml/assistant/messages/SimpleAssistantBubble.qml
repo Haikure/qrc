@@ -8,6 +8,17 @@ Rectangle {
     property bool richText: false
     property real maxWidth: 300
     property var fontFamily
+    readonly property bool renderReady: true
+
+    function readingPoint(y) { return sourcePosition.point(y - 9, messageText.implicitHeight); }
+    function readingOffset(point) { return 9 + sourcePosition.offset(point, messageText.implicitHeight); }
+
+    TextPosition {
+        id: sourcePosition
+        width: messageText.width
+        text: root.rawText
+        font.family: root.fontFamily || ""
+    }
 
     readonly property string renderedText: richText && isComplete && typeof chatbot !== "undefined"
                                         && chatbot !== null ? chatbot.markdownToHtml(rawText) : rawText

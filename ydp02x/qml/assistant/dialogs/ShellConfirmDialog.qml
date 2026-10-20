@@ -26,6 +26,13 @@ Item {
         active = true;
     }
 
+    function clear() {
+        queue = [];
+        active = false;
+        toolCallId = "";
+        command = "";
+    }
+
     function processNext() {
         if (queue.length > 0) {
             var next = queue.shift();

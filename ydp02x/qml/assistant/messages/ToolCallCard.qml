@@ -196,12 +196,6 @@ Item {
         color: "#111922"
         radius: 10
 
-        Behavior on height {
-            NumberAnimation {
-                duration: 150
-                easing.type: Easing.OutCubic
-            }
-        }
 
         Rectangle {
             width: parent.width

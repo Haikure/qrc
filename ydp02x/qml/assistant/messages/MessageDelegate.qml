@@ -1,8 +1,16 @@
 import QtQuick 2.15
+import "MessageState.js" as MessageState
 
 Item {
     id: root
 
+    property string messageId: ""
+    property string sessionId: ""
+    readonly property string layoutSignature: MessageState.version(rawText + reasoningText + attachmentsJson)
+        + ":" + listWidth + ":" + (fontFamily || "") + ":" + renderMode + ":" + isComplete
+    property var savedState: MessageState.entry(sessionId, messageId)
+    property real committedHeight: savedState.height || 44
+    property var contentBubble: null
     property string text: ""
     property string rawText: ""
     property string reasoningText: ""
@@ -23,6 +31,7 @@ Item {
     property bool mathServerAvailable: false
     property bool textureCacheEnabled: true
     property string renderMode: "full"
+    property string committedRenderMode: renderMode
     property bool listMoving: false
     property bool listScrolledUp: false
     property bool navigationJumping: false
@@ -43,17 +52,65 @@ Item {
     signal attachmentOpenRequested(string attachmentType, string localPath)
 
     width: listWidth
-    height: messageLoader.height
+    height: committedHeight
+
+    function readingPoint(offset) {
+        if (contentBubble) {
+            var local = contentBubble.mapFromItem(root, 0, offset);
+            return contentBubble.readingPoint(local.y);
+        }
+        return {block: -1, offset: offset};
+    }
+    function readingOffset(point) {
+        if (point.row) return point.offset;
+        if (contentBubble) {
+            var local = contentBubble.readingOffset(point);
+            return contentBubble.mapToItem(root, 0, local).y;
+        }
+        return point.offset;
+    }
+    function scheduleHeight() { heightCommit.restart(); }
+    onLayoutSignatureChanged: scheduleHeight()
+    onRenderModeChanged: {
+        if (!listMoving) committedRenderMode = renderMode;
+    }
+    onListMovingChanged: {
+        if (!listMoving) {
+            committedRenderMode = renderMode;
+            scheduleHeight();
+        }
+    }
+    Component.onCompleted: {
+        committedRenderMode = renderMode;
+        scheduleHeight();
+    }
+
+    Timer {
+        id: heightCommit
+        interval: 16
+        onTriggered: {
+            if (root.listMoving) return;
+            if (!messageLoader.item || (root.contentBubble && root.isComplete && !root.contentBubble.renderReady)) return;
+            var measured = Math.max(1, messageLoader.height);
+            if (Math.abs(root.committedHeight - measured) > 0.1) {
+                root.richContentCommitStarted(root.y);
+                root.committedHeight = measured;
+            }
+            root.savedState.height = measured;
+            root.savedState.signature = root.layoutSignature;
+        }
+    }
 
     Loader {
         id: messageLoader
         width: root.width
         height: item ? item.implicitHeight : 44
+        onHeightChanged: root.scheduleHeight()
         sourceComponent: root.isThinking ? thinkingComponent
                        : root.isReasoning ? reasoningComponent
                        : root.isToolCall ? toolComponent
                        : root.isUser ? userComponent
-                       : root.renderMode === "full" ? assistantComponent
+                       : root.committedRenderMode === "full" ? assistantComponent
                        : simpleAssistantComponent
     }
 
@@ -77,20 +134,14 @@ Item {
         Item {
             id: reasoningItem
             // 展开状态：用户手动选择优先，否则未完成时展开。
-            property bool userToggled: false
-            property bool userExpanded: false
+            property bool userToggled: root.savedState.expanded !== null
+            property bool userExpanded: root.savedState.expanded === true
             readonly property bool expanded: userToggled ? userExpanded : !root.isComplete
-            property int boundMessageIndex: root.messageIndex
             readonly property bool bodyVisible: expanded
             // 展开后的最大高度。
             readonly property real maxBodyHeight: 104
             implicitWidth: root.width
 
-            onBoundMessageIndexChanged: {
-                // 复用到另一条消息时重置展开选择。
-                userToggled = false;
-                userExpanded = false;
-            }
             implicitHeight: reasoningPanel.height + 8
 
             Rectangle {
@@ -186,12 +237,12 @@ Item {
                         anchors.fill: parent
                         // 有内容时也允许展开。
                         enabled: root.isComplete || root.rawText.length > 0
-                        // 防止点击被 ListView 抢走。
-                        preventStealing: true
+                        preventStealing: false
                         onClicked: {
                             root.toolCardExpansionStarted(!reasoningItem.expanded);
                             reasoningItem.userExpanded = !reasoningItem.expanded;
                             reasoningItem.userToggled = true;
+                            root.savedState.expanded = reasoningItem.userExpanded;
                         }
                     }
                 }
@@ -217,20 +268,25 @@ Item {
                                 contentY = Math.max(0, contentHeight - height);
                         }
 
+                        Timer {
+                            id: reasoningFollowTimer
+                            interval: 0
+                            onTriggered: reasoningViewport.followLatest()
+                        }
+
                         Text {
                             id: reasoningText
                             width: reasoningViewport.width
-                            // 流式期间只排版尾部 1200 字。
-                            text: root.isComplete ? root.rawText : root.rawText.slice(-1200)
+                            text: root.rawText
                             color: "#9EB1C0"
                             font.pixelSize: 11
                             font.family: root.fontFamily || ""
                             wrapMode: Text.WrapAnywhere
                             lineHeight: 1.25
-                            onImplicitHeightChanged: Qt.callLater(reasoningViewport.followLatest)
+                            onImplicitHeightChanged: reasoningFollowTimer.restart()
                         }
 
-                        onHeightChanged: Qt.callLater(followLatest)
+                        onHeightChanged: reasoningFollowTimer.restart()
                     }
                 }
             }
@@ -248,6 +304,8 @@ Item {
                 text: root.text
                 rawText: root.rawText
                 toolState: root.toolState
+                expanded: root.savedState.expanded === true
+                onExpandedChanged: root.savedState.expanded = expanded
                 maxWidth: Math.min(root.listWidth - 16, 300)
                 fontFamily: root.fontFamily
                 x: 8
@@ -285,9 +343,11 @@ Item {
                     id: simpleBubble
                     rawText: root.rawText
                     isComplete: root.isComplete
-                    richText: root.renderMode === "basic"
+                    richText: root.committedRenderMode === "basic"
                     maxWidth: Math.min(root.listWidth - 16, 400)
                     fontFamily: root.fontFamily
+                    Component.onCompleted: root.contentBubble = simpleBubble
+                    Component.onDestruction: { if (root.contentBubble === simpleBubble) root.contentBubble = null; }
 
                     MouseArea {
                         anchors.fill: parent
@@ -349,7 +409,8 @@ Item {
                     rawText: (root.reasoningText !== ""
                               ? "**推理过程**\n\n" + root.reasoningText + "\n\n**回答**\n\n" : "") + root.rawText
                     isComplete: root.isComplete
-                    streamTailOnly: !root.listScrolledUp
+                    messageId: root.messageId
+                    sessionId: root.sessionId
                     serverAvailable: root.mathServerAvailable
                     layoutBusy: root.listMoving || root.navigationJumping || !root.richContentNearViewport
                     scrolledUp: root.listScrolledUp
@@ -357,6 +418,9 @@ Item {
                     maxWidth: Math.min(root.listWidth - 44, 372)
                     fontFamily: root.fontFamily
                     onRenderCommitStarted: root.richContentCommitStarted(root.y)
+                    onRenderReadyChanged: root.scheduleHeight()
+                    Component.onCompleted: root.contentBubble = mixedBubble
+                    Component.onDestruction: { if (root.contentBubble === mixedBubble) root.contentBubble = null; }
                 }
 
                 MouseArea {
