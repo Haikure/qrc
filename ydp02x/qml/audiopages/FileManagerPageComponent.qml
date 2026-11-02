@@ -82,9 +82,18 @@ YPage {
         }
     }
 
-    YBaseListView {
+    FileManagerBreadcrumb {
+        anchors.left: parent.left
+        anchors.leftMargin: 54
+        anchors.right: parent.right
+        anchors.rightMargin: 10
+    }
+
+    FileManagerListView {
         id: id_files_view
+        onNavigated: id_error_tip.visible = false
         anchors.fill: parent
+        anchors.topMargin: 46
         anchors.leftMargin: 54
         anchors.rightMargin: 10
         spacing: 8
@@ -96,31 +105,7 @@ YPage {
             if (!moving && atYEnd && fileManager.hasMore)
                 fileManager.loadMore();
         }
-        header: id_header_component
         footer: fileManager.hasMore ? id_listview_loading_footer : id_listview_loaded_footer
-        onBusyingChanged: {
-            if (!busying)
-                id_files_view.positionViewAtBeginning();
-        }
-
-        Component {
-            id: id_header_component
-            Item {
-                width: id_files_view.width
-                implicitHeight: 50
-                YTextBase {
-                    color: YColors.grayText
-                    font.pixelSize: 16
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: parent.width
-                    visible: !id_error_tip.visible
-                    elide: YTextBase.ElideLeft
-                    text: fileManager.currentTitle
-                    textFormat: Text.RichText
-                }
-            }
-        }
-
         Component {
             id: id_listview_loading_footer
             YListViewLoadMoreFooter {}
@@ -337,27 +322,7 @@ YPage {
         }
     }
 
-    YOneButtonDialog {
-        id: id_reload_dialog
-        z: parent.z + 1
-        anchors.fill: parent
-        tipItem.text: "当前文件夹内容发生变化"
-        buttonItem.text: "重新加载"
-        showClose: false
-        onClicked: {
-            currentMode = kNormal;
-            fileManager.reload();
-            close();
-        }
 
-        Connections {
-            target: fileManager
-            function onDirectoryChanged() {
-                if (!id_reload_dialog.isShowing && fileManager.shouldNotifyDirChanged())
-                    id_reload_dialog.show();
-            }
-        }
-    }
 
     YDynamicPageStack {
         id: id_pop_container

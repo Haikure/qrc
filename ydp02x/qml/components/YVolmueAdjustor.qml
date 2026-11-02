@@ -42,6 +42,7 @@ YTouchRegulator {
     onValueChanged: {
         if (spkSettingVolume != value) {
             settingManager.setSpkVolume(value)
+                        Qt.callLater(function() { value = settingManager.spkVolume })
         }
     }
 

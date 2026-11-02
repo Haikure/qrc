@@ -9,6 +9,14 @@ YSettingItemPage {
     id: id_setting_item
     objectName: "YPage===SystemTweakSettingPage.qml"
 
+    property bool showOcrSettings: false
+    Component.onCompleted: {
+        if (showOcrSettings) Qt.callLater(function() {
+            id_setting_item_view.contentY = Math.max(0, Math.min(id_title_experimental.y + id_column.y,
+                id_setting_item_view.contentHeight - id_setting_item_view.height));
+        })
+    }
+
     Flickable {
         id: id_setting_item_view
         anchors.fill: parent
@@ -23,6 +31,29 @@ YSettingItemPage {
             anchors.left: parent.left
             anchors.right: parent.right
             spacing: 8
+
+            // ======================================
+            // 应用重启（只结束 YoudaoDictPen 进程，由 guardian 重新拉起；不是整机 reboot）
+
+            YText {
+                id: id_title_restart
+                font.pixelSize: 16
+                font.italic: true
+                color: YColors.grayText
+                wrapMode: YText.Wrap
+                lineHeightMode: YTextBase.FixedHeight
+                lineHeight: 24
+                width: parent.width
+                text: "应用重启"
+            }
+
+            YSettingAboutClickableItem {
+                title: mod.applicationRestartPending ? "正在重启应用…" : "重启应用"
+                enabled: !mod.applicationRestartPending
+                onClicked: {
+                    id_restart_app_dialog.show();
+                }
+            }
 
             // ======================================
 
@@ -142,7 +173,7 @@ YSettingItemPage {
 
             YSettingSwitchItem {
                 implicitHeight: 54
-                title: ocrBackend.installed ? "使用 PP-OCRv5 识别引擎" : "PP-OCRv5 识别引擎（未安装）"
+                title: "PP-OCRv5 引擎"
                 enabled: ocrBackend.installed
                 switchOn: ocrBackend.enabled
                 interval: 0
@@ -159,13 +190,13 @@ YSettingItemPage {
                 lineHeight: 18
                 width: parent.width
                 text: ocrBackend.installed
-                      ? "扫描识别改用飞桨 PP-OCRv5 模型，中文更准、速度稍慢。切换后会自动重启一次以生效。"
-                      : "需要先在设备上运行 penmods-ppocr.sh 安装识别组件。"
+                      ? "中文更准，速度稍慢；切换后重启应用。"
+                      : "未安装，需先安装 PP-OCRv5 组件。"
             }
 
             YSettingSwitchItem {
                 implicitHeight: 54
-                title: "识别精度优先（较慢）"
+                title: "识别精度优先"
                 enabled: ocrBackend.installed && ocrBackend.enabled
                 switchOn: ocrBackend.accuracyFirst
                 interval: 0
@@ -181,7 +212,7 @@ YSettingItemPage {
                 lineHeightMode: YTextBase.FixedHeight
                 lineHeight: 18
                 width: parent.width
-                text: "开：输入高度 48，密集中文更准；关：输入高度 32，约快一倍。立即生效，无需重启。"
+                text: "更准确，速度较慢；立即生效。"
             }
 
             YSettingSwitchItem {
@@ -202,12 +233,12 @@ YSettingItemPage {
                 lineHeightMode: YTextBase.FixedHeight
                 lineHeight: 18
                 width: parent.width
-                text: "补偿屏幕边缘一像素的死区。可解决从屏幕右边缘向内滑动时系统不响应的问题。切换后会自动重启一次以生效。"
+                text: "改善屏幕边缘触控；切换后重启设备。"
             }
 
             YSettingSwitchItem {
                 implicitHeight: 54
-                title: vpuUnlock.supported ? "VPU 硬件解码" : "VPU 硬件解码（不可用）"
+                title: "VPU 硬件解码"
                 enabled: vpuUnlock.supported
                 switchOn: vpuUnlock.enabled
                 // 不设 interval: 0：保留组件默认防抖，避免连点排两次重启
@@ -224,8 +255,8 @@ YSettingItemPage {
                 lineHeight: 18
                 width: parent.width
                 text: vpuUnlock.supported
-                      ? "给设备树的 VPU 节点打补丁，播放器就能用硬件解码（更省电、高分辨率更流畅）。会给 boot 分区打补丁并自动重启一次，出厂镜像会自动备份到 /userdisk/PenMods/。"
-                      : "本机不支持：需要可写的 boot 分区，且设备树里存在 vpu_combo 节点。"
+                      ? "提升视频播放性能；修改启动分区并重启。"
+                      : "当前设备不支持。"
             }
 
             YSpacingForColumn {
@@ -233,5 +264,23 @@ YSettingItemPage {
             }
         }
 
+    }
+
+    // 软重启确认：只重启应用进程，不关机；C++ 侧会先落盘并延迟执行 sync + killall。
+    YTwoButtonDialog {
+        id: id_restart_app_dialog
+        z: 1500
+        anchors.fill: parent
+        tipItem.font.pixelSize: 13
+        tipItem.text: "只重启应用进程，设备不会关机\n约 3-5 秒后恢复\n配置与聊天记录会先保存\n正在进行的 AI 请求会被取消"
+        onClickedConfirm: {
+            close();
+            if (mod.restartApplication()) {
+                qmlGlobal.showToast("应用将重新启动，约几秒后恢复…", YColors.yellow);
+            }
+        }
+        onClickedCancel: {
+            close();
+        }
     }
 }

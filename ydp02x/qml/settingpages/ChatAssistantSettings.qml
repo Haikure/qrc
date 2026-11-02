@@ -27,6 +27,47 @@ YBackButtonPage {
         }
     }
 
+    property bool showMathSettings: false
+    Component.onCompleted: {
+        if (showMathSettings) Qt.callLater(function() {
+            id_flickable.contentY = Math.max(0, Math.min(mathRenderTitle.y + id_column.y,
+                id_flickable.contentHeight - id_flickable.height));
+        })
+    }
+
+    // ---- Shell 模式（新库提供 shellMode；旧库回退到 shellToolEnabled，绝不误开 automatic） ----
+    function automaticModeSupported() {
+        return typeof chatbot.shellMode === "string";
+    }
+    function shellModes() {
+        try {
+            var cfg = JSON.parse(chatbot.getShellToolConfig());
+            if (cfg.policy_version >= 2)
+                return ["off", "confirm", "automatic", "restricted", "full"];
+        } catch (e) {}
+        return automaticModeSupported() ? ["off", "confirm", "automatic"] : ["off", "confirm"];
+    }
+    function currentShellMode() {
+        if (typeof chatbot.shellMode === "string")
+            return chatbot.shellMode;
+        return chatbot.shellToolEnabled ? "confirm" : "off";
+    }
+    function shellModeLabel(mode) {
+        if (mode === "off") return "关闭";
+        if (mode === "automatic") return "只读网页";
+        if (mode === "restricted") return "受限用户";
+        if (mode === "full") return "完全权限";
+        return "手动确认";
+    }
+    function applyShellMode(mode) {
+        if (typeof chatbot.shellMode === "string") {
+            chatbot.shellMode = mode;
+        } else {
+            // 旧版主库没有 automatic，只做 off/confirm 映射
+            chatbot.shellToolEnabled = (mode !== "off");
+        }
+    }
+
     Flickable {
         id: id_flickable
         anchors.fill: parent
@@ -249,17 +290,45 @@ YBackButtonPage {
             }
 
             YSettingItemTitle {
+                title: "AI 服务"
+            }
+
+            YSettingAboutClickableItem {
+                title: "重置 AI 服务"
+                imageName: "settings/info_more_arrow"
+                onClicked: {
+                    aiResetDialog.failText = "";
+                    aiResetDialog.show();
+                }
+            }
+
+            YSettingItemTitle {
                 title: "Shell 工具"
             }
 
-            DescribedSwitchItem {
-                title: "启用 Shell 执行"
-                description: "允许 AI 提出 shell 命令（需手动确认）"
-                switchOn: chatbot.shellToolEnabled
-                interval: 0
-                onTimerTriggered: {
-                    chatbot.shellToolEnabled = !chatbot.shellToolEnabled;
+            YSettingAboutClickableItem {
+                id: shellModeItem
+                title: "执行模式"
+                value: shellModeLabel(currentShellMode())
+                imageName: "settings/info_more_arrow"
+                onClicked: {
+                    var order = shellModes();
+                    var idx = order.indexOf(currentShellMode());
+                    var next = order[(idx + 1) % order.length];
+                    if (next !== "off" && next !== "confirm") {
+                        shellRiskDialog.mode = next;
+                        shellRiskDialog.show();
+                    } else {
+                        applyShellMode(next);
+                    }
                 }
+            }
+
+            YSettingAboutClickableItem {
+                visible: currentShellMode() !== "off" && currentShellMode() !== "confirm"
+                title: "切回手动确认"
+                imageName: "settings/info_more_arrow"
+                onClicked: applyShellMode("confirm")
             }
 
             YSettingAboutClickableItem {
@@ -310,6 +379,7 @@ YBackButtonPage {
             }
 
         YSettingItemTitle {
+            id: mathRenderTitle
             title: "数学公式渲染"
         }
 
@@ -323,25 +393,14 @@ YBackButtonPage {
                 }
             }
 
-            YSettingAboutClickableItem {
-                id: mathServerPathItem
-                title: "服务器路径"
-                value: chatbot.mathServerPath !== "" ? chatbot.mathServerPath : "未配置"
-                imageName: "settings/info_more_arrow"
-                valueItem.elide: Text.ElideMiddle
-                valueItem.width: Math.min(valueItem.implicitWidth, 120)
-                onClicked: {
-                    openKeyboard("MathJax 服务可执行文件路径", chatbot.mathServerPath, function(val) {
-                        if (val !== null) chatbot.mathServerPath = val.trim();
-                    });
-                }
-            }
-
-            Connections {
-                target: chatbot
-                function onMathRenderConfigChanged() {
-                    mathServerPathItem.value = chatbot.mathServerPath !== "" ? chatbot.mathServerPath : "未配置";
-                }
+            YText {
+                width: parent.width
+                font.pixelSize: 12
+                color: YColors.grayText
+                wrapMode: Text.WrapAnywhere
+                text: "服务：" + (chatbot.mathServerPath || "未安装")
+                      + (chatbot.mathServerStatus ? "\n" + chatbot.mathServerStatus : "")
+                      + "\n公式图片需使用完全气泡模式；文本阅读器也使用此服务。"
             }
 
         YSettingItemTitle {
@@ -368,6 +427,57 @@ YBackButtonPage {
                 implicitHeight: 4
             }
         }
+    }
+
+    // 统一使用有道原生双按钮询问组件。
+    YTwoButtonDialog {
+        id: shellRiskDialog
+        anchors.fill: parent
+        z: 1500
+        property string mode: "automatic"
+        tipItem.font.family: qmlGlobal.fontFamilyZhCn
+        tipItem.font.pixelSize: 12
+        tipItem.text: "启用" + shellModeLabel(mode) + "？\n"
+                      + (mode === "full"
+                         ? "以 root 执行，不逐条询问。可修改系统和用户文件，仅用于可信任务。\n保留黑名单、超时和输出限制。"
+                         : mode === "restricted"
+                           ? "以非特权用户执行，不逐条询问，禁止提权。\n仍可联网、读写公共文件，不是沙盒。"
+                           : "仅放行只读网页抓取，其他命令拒绝。\n保留黑名单、超时和输出限制。")
+        // 原生组件的别名沿用宿主命名：buttonItemCancel 实际是右侧确认按钮。
+        buttonItemCancel.text: "启用此模式"
+        onClickedConfirm: {
+            close();
+            applyShellMode(mode);
+        }
+        onClickedCancel: close()
+    }
+
+    YTwoButtonDialog {
+        id: aiResetDialog
+        anchors.fill: parent
+        z: 1500
+        property bool busy: false
+        property string failText: ""
+        tipItem.font.family: qmlGlobal.fontFamilyZhCn
+        tipItem.font.pixelSize: 13
+        tipItem.text: failText !== "" ? failText
+                      : "重置 AI 服务？\n取消在途请求与 Shell 命令，\n保留会话历史。"
+        buttonItemCancel.text: busy ? "重置中..." : "确认重置"
+        onClickedConfirm: {
+            if (busy) return;
+            busy = true;
+            var supported = typeof chatbot.resetService === "function";
+            var ok = supported ? chatbot.resetService() : false;
+            busy = false;
+            if (ok) {
+                close();
+            } else {
+                failText = supported ? "重置失败，请稍后重试（详见 applog）"
+                                     : "当前主库不支持重置，请更新主库后重试";
+                qmlGlobal.showToast(failText, YColors.yellow);
+            }
+        }
+        onClickedCancel: close()
     }
 
     YPagePopHelper {

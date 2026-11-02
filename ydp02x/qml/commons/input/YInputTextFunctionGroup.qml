@@ -86,70 +86,10 @@ Item {
             requestVoiceInput();
         }
 
-        Item {
-            width: 26
-            height: 32
+        YImage {
             anchors.centerIn: parent
-
-            Rectangle {
-                width: 12
-                height: 20
-                radius: 6
-                color: "transparent"
-                border.width: 2
-                border.color: YColors.white
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.top: parent.top
-            }
-
-            Rectangle {
-                width: 2
-                height: 9
-                color: YColors.white
-                anchors.left: parent.left
-                anchors.leftMargin: 3
-                anchors.top: parent.top
-                anchors.topMargin: 10
-            }
-
-            Rectangle {
-                width: 2
-                height: 9
-                color: YColors.white
-                anchors.right: parent.right
-                anchors.rightMargin: 3
-                anchors.top: parent.top
-                anchors.topMargin: 10
-            }
-
-            Rectangle {
-                width: 20
-                height: 2
-                radius: 1
-                color: YColors.white
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.top: parent.top
-                anchors.topMargin: 18
-            }
-
-            Rectangle {
-                width: 2
-                height: 7
-                color: YColors.white
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.top: parent.top
-                anchors.topMargin: 21
-            }
-
-            Rectangle {
-                width: 14
-                height: 2
-                radius: 1
-                color: YColors.white
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.bottom: parent.bottom
-                anchors.bottomMargin: 2
-            }
+            sourceSize: Qt.size(28, 28)
+            source: "qrc:/images/keyboard/microphone.svg"
         }
     }
 

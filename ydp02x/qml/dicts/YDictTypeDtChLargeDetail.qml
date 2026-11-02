@@ -109,7 +109,7 @@ Item {
 
                                 YTextBase {
                                     id: id_word_trs_sents_index
-                                    color: "#FFFFFF"
+                                    color: YColors.white
                                     font.pixelSize: 16
                                     font.weight: Font.Bold
                                     font.family: qmlGlobal.fontFamilyEnUs

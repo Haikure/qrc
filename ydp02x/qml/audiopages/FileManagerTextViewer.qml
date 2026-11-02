@@ -12,7 +12,7 @@ YBackButtonAudioPage {
     // ── 内容数据 ──
     property variant stringList: {
         var content = (textReader && textReader.content) ? textReader.content : "";
-        if (content === "")
+        if (content === "" || (textReader.isMarkdown && _hasMath))
             return [];
 
         if (!textReader.isMarkdown) {
@@ -22,15 +22,13 @@ YBackButtonAudioPage {
     }
 
     readonly property real _contentWidth: id_container_index.width - 54 - 10
-    property bool _hasMath: {
-        if (textReader && textReader.isMarkdown && textReader.content) {
-            return textReader.content.indexOf("$$") !== -1 || textReader.content.indexOf("\\(") !== -1;
-        }
-        return false;
-    }
+    readonly property bool _hasMath: textReader && textReader.isMarkdown
+            && /(?:\$|\\\(|\\\[)/.test(textReader.content || "")
 
     property bool _mathServerAvailable: false
-    property var _blocks: _hasMath ? _parseBlocks(textReader.content || "") : []
+    property int _mathProbeSequence: 0
+    property var _mathProbeRequest: null
+    property string _renderSessionId: "file:" + textReader.title
 
     // ── 自动启动数学公式渲染服务器 ──
     function _tryStartMathServer() {
@@ -38,20 +36,7 @@ YBackButtonAudioPage {
             return;
         if (!chatbot.mathRenderEnabled)
             return;
-        var serverPath = chatbot.mathServerPath.trim();
-        if (serverPath === "")
-            return;
-        // 检查进程是否已在运行
-        var binName = serverPath.replace(/.*\//, "");
-        var pattern = "[" + binName[0] + "]" + binName.slice(1);
-        var running = typeof shell !== "undefined" && shell !== null ? shell.exec("pgrep -f " + pattern) : "";
-        if (running !== "")
-            return;
-        // 启动服务器
-        if (typeof shell !== "undefined" && shell !== null) {
-            console.log("[MathServer] 文件管理器启动服务器：", serverPath);
-            shell.startDetached(serverPath);
-        }
+        chatbot.startMathServer();
     }
 
     Component.onCompleted: {
@@ -59,22 +44,53 @@ YBackButtonAudioPage {
             _tryStartMathServer();
     }
 
+    Connections {
+        target: chatbot
+        function onMathRenderConfigChanged() {
+            ++_mathProbeSequence;
+            if (_mathProbeRequest !== null) {
+                _mathProbeRequest.abort();
+                _mathProbeRequest = null;
+            }
+            _mathServerAvailable = false;
+            if (_hasMath && chatbot.mathRenderEnabled) {
+                _tryStartMathServer();
+                mathServerProbe.restart();
+            } else {
+                mathServerProbe.stop();
+            }
+        }
+    }
+
+    Component.onDestruction: {
+        ++_mathProbeSequence;
+        if (_mathProbeRequest !== null) _mathProbeRequest.abort();
+    }
+
     // ── 数学服务器健康检查 ──
     Timer {
         id: mathServerProbe
         interval: 5000
         repeat: true
-        running: _hasMath && !_mathServerAvailable
+        running: _hasMath && chatbot.mathRenderEnabled && !_mathServerAvailable
         triggeredOnStart: true
         onTriggered: {
+            _tryStartMathServer();
+            var sequence = ++_mathProbeSequence;
             var xhr = new XMLHttpRequest();
-            xhr.open("GET", "http://127.0.0.1:3000/", true);
+            _mathProbeRequest = xhr;
+            xhr.open("GET", "http://127.0.0.1:3000/health", true);
             xhr.timeout = 2000;
             xhr.onreadystatechange = function () {
-                if (xhr.readyState === XMLHttpRequest.DONE)
-                    _mathServerAvailable = (xhr.status > 0);
+                if (sequence !== _mathProbeSequence) return;
+                if (xhr.readyState === XMLHttpRequest.DONE) {
+                    _mathProbeRequest = null;
+                    _mathServerAvailable = chatbot.mathRenderEnabled && (xhr.status === 200);
+                }
             };
             xhr.ontimeout = function () {
+                if (sequence !== _mathProbeSequence) return;
+                _mathProbeRequest = null;
                 _mathServerAvailable = false;
             };
             try {
@@ -162,7 +178,7 @@ YBackButtonAudioPage {
 
         Column {
             id: id_mathColumn
-            width: parent.width
+            width: id_mathContent.width
             spacing: 8
             topPadding: 10
             bottomPadding: 10
@@ -177,232 +193,27 @@ YBackButtonAudioPage {
                 horizontalAlignment: Text.AlignLeft
             }
 
-            Repeater {
-                model: _blocks
-
-                delegate: Loader {
-                    width: parent.width
-                    sourceComponent: modelData.type === "math_block" ? mathBlockComponent : paragraphComponent
-
-                    onLoaded: {
-                        if (modelData.type === "math_block") {
-                            item.mContent = modelData.content;
-                        } else if (modelData.type === "paragraph") {
-                            item.mSegments = modelData.segments;
-                        }
-                    }
+            Loader {
+                active: id_container_index._hasMath
+                width: parent.width
+                onLoaded: {
+                    item.rawText = Qt.binding(function() { return textReader.content || ""; });
+                    item.isComplete = true;
+                }
+                sourceComponent: MixedContentBubble {
+                    // File previews do not own a chat session. Keep their geometry local;
+                    // parsed Markdown and formula images still use the shared bounded caches.
+                    savedState: ({height: 0, signature: "", blocks: [], expanded: null})
+                    messageId: "document"
+                    sessionId: id_container_index._renderSessionId
+                    serverAvailable: id_container_index._mathServerAvailable
+                    maxWidth: id_container_index._contentWidth
+                    fontFamily: qmlGlobal.fontFamilyZhCn
+                    layoutBusy: id_mathContent.moving
+                    scrolledUp: true
                 }
             }
         }
-    }
-
-    // 块级公式组件
-    Component {
-        id: mathBlockComponent
-        MathBubble {
-            property string mContent: ""
-            latex: mContent
-            display: true
-            serverAvailable: _mathServerAvailable
-            maxWidth: _contentWidth
-            fontFamily: qmlGlobal.fontFamilyZhCn
-        }
-    }
-
-    // 段落组件（文字 + 行内公式混排）
-    Component {
-        id: paragraphComponent
-        Flow {
-            property var mSegments: []
-            width: parent ? parent.width : _contentWidth
-            spacing: 4
-
-            Repeater {
-                model: mSegments
-                delegate: Loader {
-                    sourceComponent: modelData.type === "math" ? inlineMathComponent : textComponent
-
-                    onLoaded: {
-                        item.mContent = modelData.content;
-                    }
-                }
-            }
-        }
-    }
-
-    // 行内公式组件
-    Component {
-        id: inlineMathComponent
-        MathBubble {
-            property string mContent: ""
-            latex: mContent
-            display: false
-            serverAvailable: _mathServerAvailable
-            maxWidth: _contentWidth
-            fontFamily: qmlGlobal.fontFamilyZhCn
-        }
-    }
-
-    // 文字组件
-    Component {
-        id: textComponent
-        Text {
-            property string mContent: ""
-            text: {
-                var txt = mContent;
-                if (!txt)
-                    return "";
-                if (typeof chatbot !== "undefined" && chatbot !== null) {
-                    var html = chatbot.markdownToHtml(txt);
-                    return html.replace(/^\s*<p>/i, "").replace(/<\/p>\s*$/i, "");
-                }
-                return txt;
-            }
-            textFormat: Text.RichText
-            width: Math.min(implicitWidth, _contentWidth)
-            wrapMode: Text.Wrap
-            color: YColors.white
-            font.pixelSize: 16
-            font.family: qmlGlobal.fontFamilyZhCn
-            lineHeight: 1.2
-            linkColor: "#62A8EA"
-            verticalAlignment: Text.AlignVCenter
-        }
-    }
-
-    // ── 词法解析器：将 Markdown 解析为 blocks ──
-    function _parseBlocks(text) {
-        if (!text || text.length === 0)
-            return [];
-
-        var blocks = [];
-        var currentSegments = [];
-        var i = 0;
-        var textStart = 0;
-
-        function flushParagraph() {
-            if (currentSegments.length > 0) {
-                blocks.push({
-                    type: "paragraph",
-                    segments: currentSegments
-                });
-                currentSegments = [];
-            }
-        }
-
-        while (i < text.length) {
-            var matchStart = -1, matchEnd = -1, matchType = "";
-
-            // 1. 跳过代码块
-            if (text.substr(i, 3) === "```") {
-                var end = text.indexOf("```", i + 3);
-                if (end !== -1) {
-                    matchStart = i;
-                    matchEnd = end + 3;
-                    matchType = "code";
-                }
-            } else if (text[i] === "`" && text.substr(i, 3) !== "```") {
-                var endC = text.indexOf("`", i + 1);
-                if (endC !== -1) {
-                    matchStart = i;
-                    matchEnd = endC + 1;
-                    matchType = "code";
-                }
-            } else
-            // 2. 块级公式
-            if (text.substr(i, 2) === "$$") {
-                var endD = text.indexOf("$$", i + 2);
-                if (endD !== -1) {
-                    matchStart = i;
-                    matchEnd = endD + 2;
-                    matchType = "display";
-                }
-            } else if (text.substr(i, 2) === "\\[") {
-                var endD2 = text.indexOf("\\]", i + 2);
-                if (endD2 !== -1) {
-                    matchStart = i;
-                    matchEnd = endD2 + 2;
-                    matchType = "display";
-                }
-            } else
-            // 3. 行内公式
-            if (text.substr(i, 2) === "\\(") {
-                var endI = text.indexOf("\\)", i + 2);
-                if (endI !== -1) {
-                    matchStart = i;
-                    matchEnd = endI + 2;
-                    matchType = "inline";
-                }
-            } else if (text[i] === "$" && text.substr(i, 2) !== "$$") {
-                var endI2 = text.indexOf("$", i + 1);
-                if (endI2 !== -1 && text.substr(endI2, 2) !== "$$") {
-                    matchStart = i;
-                    matchEnd = endI2 + 1;
-                    matchType = "inline";
-                }
-            }
-
-            if (matchStart !== -1) {
-                // 将符号前积累的普通文字处理掉
-                if (matchStart > textStart) {
-                    var pre = text.slice(textStart, matchStart);
-                    var lines = pre.split(/\r?\n/);
-                    for (var l = 0; l < lines.length; l++) {
-                        if (lines[l] !== "")
-                            currentSegments.push({
-                                type: "text",
-                                content: lines[l]
-                            });
-                        if (l < lines.length - 1)
-                            flushParagraph();
-                    }
-                }
-
-                var tokenContent = text.slice(matchStart, matchEnd);
-                if (matchType === "code") {
-                    currentSegments.push({
-                        type: "text",
-                        content: tokenContent
-                    });
-                } else if (matchType === "display") {
-                    flushParagraph();
-                    var latexD = tokenContent.startsWith("$$") ? tokenContent.slice(2, -2).trim() : tokenContent.slice(2, -2).trim();
-                    blocks.push({
-                        type: "math_block",
-                        content: latexD
-                    });
-                } else if (matchType === "inline") {
-                    var latexI = tokenContent.startsWith("\\(") ? tokenContent.slice(2, -2).trim() : tokenContent.slice(1, -1).trim();
-                    currentSegments.push({
-                        type: "math",
-                        content: latexI
-                    });
-                }
-
-                i = matchEnd;
-                textStart = matchEnd;
-            } else {
-                i++;
-            }
-        }
-
-        // 处理尾部文本
-        if (textStart < text.length) {
-            var rest = text.slice(textStart);
-            var rLines = rest.split(/\r?\n/);
-            for (var rl = 0; rl < rLines.length; rl++) {
-                if (rLines[rl] !== "")
-                    currentSegments.push({
-                        type: "text",
-                        content: rLines[rl]
-                    });
-                if (rl < rLines.length - 1)
-                    flushParagraph();
-            }
-        }
-        flushParagraph();
-
-        return blocks;
     }
 
     // ══════════════════════════════════════════

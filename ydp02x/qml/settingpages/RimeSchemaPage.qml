@@ -30,6 +30,12 @@ YSettingItemPage {
         }
     }
 
+    Connections {
+        target: rime
+        function onDeployFinished(success) { id_setting_item.refreshSchemas(); }
+        function onSyncFinished(success) { id_setting_item.refreshSchemas(); }
+    }
+
     Component.onCompleted: {
         refreshSchemas();
         rime.refreshCurrentSchema();

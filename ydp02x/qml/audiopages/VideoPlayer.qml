@@ -11,7 +11,18 @@ YBackButtonAudioPage {
     pageIndex: PageIndex.VideoPlayer
 
     onBackButtonClicked: {
+        id_session.stopAndRelease();
         videoPlayer.onStatusChanged('stopped');
+    }
+
+    YVideoMediaSession {
+        id: id_session
+        player: id_video
+        ownerId: "penmods.video.qt"
+        title: decodeURIComponent(videoPlayer.path.toString().split('/').pop())
+        playing: id_video.playbackState === MediaPlayer.PlayingState
+        paused: id_video.playbackState === MediaPlayer.PausedState
+        onOpenRequested: id_video_player.show()
     }
 
     YVerticalTitleBar {

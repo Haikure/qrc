@@ -37,6 +37,7 @@ YMouseArea {
     property var rectIndex: -1
     property var associatedWord: ""
     property alias wordItem: id_word
+    property bool showWordUnderline: false
     //property alias calcTextItem: id_calc_text
 
     function isChinese(str){
@@ -51,8 +52,20 @@ YMouseArea {
         id:id_rect_item
         width: !id_word_bg.nextIsNotNewWord
                ?id_word_bg.implicitRectWidth +letterSpace : id_word_bg.implicitRectWidth
-        height: id_word_bg.height
+        height: id_word_bg.height + (wordUnderline.visible ? 4 : 0)
         clip: true
+
+        // Join character delegates within a word, leaving a gap at word boundaries.
+        Rectangle {
+            id: wordUnderline
+            visible: showWordUnderline && id_word_bg.clickable && content.trim().length > 0
+            x: id_word_bg.lastIsNotNewWord ? 0 : 2
+            y: id_word_bg.height + 1
+            width: Math.max(0, id_word_bg.implicitRectWidth - x
+                            - (id_word_bg.nextIsNotNewWord ? 0 : 2))
+            height: 1
+            color: id_word.color
+        }
 
         Rectangle {
             id: id_word_bg

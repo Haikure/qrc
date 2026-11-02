@@ -322,6 +322,7 @@ Flow {
 
         YDictPageHeaderItem {
             id: id_delegate
+            showWordUnderline: true
             enabled: !isScanning && id_delegate.rawEnableSet
             charType: model.modelData.charType
             nextIsNotPunc: index+1 < id_breakList_repeter.model.length && id_breakList_repeter.model[index+1].charType !== YEnum.CT_PUNC

@@ -32,6 +32,8 @@ YMainWindow {
         if (!page || mainKeyboardPage)
             return;
 
+        // This keyboard is cached outside the navigator; closing must keep the preloaded page alive.
+        page.destroyOnBack = false;
         mainKeyboardPage = page;
         page.visible = false;
         page.backButtonClicked.connect(function() {

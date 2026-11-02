@@ -17,20 +17,64 @@ YBackButtonAudioPage {
     id: id_external_player
     pageIndex: PageIndex.ExternalPlayer
 
-    readonly property bool embedded: externalPlayer.hasEmbeddedPlayer
+    property bool embedded: externalPlayer.hasEmbeddedPlayer
+    property bool embeddedLoadFailed: false
+    property bool fallbackAttempted: false
+    property bool fallbackFailed: false
+
+    function useMpvFallback() {
+        if (id_external_player.fallbackAttempted) return;
+        id_external_player.fallbackAttempted = true;
+        id_external_player.embeddedLoadFailed = true;
+        id_external_player.embedded = false;
+        id_external_player.fallbackFailed = !externalPlayer.fallbackToMpv();
+    }
 
     Loader {
         id: id_embedded_loader
         anchors.fill: parent
         // 路径写死成常量字符串，避免 QML 在 hasEmbeddedPlayer 变化时重新解析
-        source: id_external_player.embedded ? "ExternalPlayerEmbedded.qml" : ""
-        onLoaded: item.exitRequested.connect(id_external_player.backButtonClicked)
+        source: id_external_player.embedded && !id_external_player.embeddedLoadFailed
+                ? "ExternalPlayerEmbedded.qml" : ""
+        onLoaded: {
+            item.exitRequested.connect(id_external_player.backButtonClicked);
+            item.openRequested.connect(function() { id_external_player.show(); });
+        }
+        onStatusChanged: {
+            if (status === Loader.Error) {
+                Qt.callLater(function() {
+                    if (id_embedded_loader.status === Loader.Error && id_external_player.embedded)
+                        id_external_player.useMpvFallback();
+                });
+            }
+        }
     }
 
     // 没有内嵌播放器时（mpv 在画面上）：只提供返回按钮
     YVerticalTitleBar {
         visible: !id_external_player.embedded
         onCallBack: backButtonClicked()
+    }
+
+    Text {
+        anchors.centerIn: parent
+        visible: id_external_player.fallbackFailed
+        text: "内嵌播放器加载失败，独立播放器也无法启动"
+        color: "white"
+        font.pixelSize: 13
+        wrapMode: Text.Wrap
+        width: parent.width - 24
+        horizontalAlignment: Text.AlignHCenter
+    }
+
+    Connections {
+        target: externalPlayer
+        function onMediaChanged() {
+            id_external_player.embeddedLoadFailed = false;
+            id_external_player.fallbackAttempted = false;
+            id_external_player.fallbackFailed = false;
+            id_external_player.embedded = externalPlayer.hasEmbeddedPlayer;
+        }
     }
 
 }

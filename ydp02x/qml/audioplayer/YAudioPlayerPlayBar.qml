@@ -13,7 +13,7 @@ Item {
     readonly property bool isPlaying: YEnum.PLAYING === mediaPlayerManager.playState
     readonly property int audioSequence: settingManager.audioSequence
     property int truncateAudioState: YEnum.TAS_STOP
-    property bool shutdownMode: false
+    signal onlineLyricsRequested()
     property var shutdownDurations: [15, 20, 30, 45, 60, 120]
 
     // 倍速设置
@@ -79,183 +79,201 @@ Item {
         implicitHeight: parent.height
         radius: 14
 
-        Column {
-            id: id_play_bar_column
-            width: parent.width - 10
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: 13
+        Flickable {
+            id: menuList
+            anchors.fill: parent
+            anchors.topMargin: 8
+            anchors.bottomMargin: 8
+            contentWidth: width
+            contentHeight: id_play_bar_column.height
+            clip: true
+            boundsBehavior: Flickable.DragAndOvershootBounds
 
-            YAudioPlayerPlayBarSettingItem {
-                id: id_lrc_state_button
-                mouseAreaMargins: -8
+            Column {
+                id: id_play_bar_column
+                width: menuList.width - 16
+                spacing: 4
 
-                imageName: {
-                    switch (lrcStateList[lrcStateIndex]) {
-                    case YEnum.LS_ORIGINAL:
-                        return "audioplayer/original26"
-                    case YEnum.LS_TRANS:
-                        return "audioplayer/trans26"
-                    case YEnum.LS_HIDE:
-                        return "audioplayer/hide_lrc26"
-                    case YEnum.LS_BILINGUAL:
-                    default:
-                        return "audioplayer/bilingual26"
-                    }
-                }
-                text: {
-                    switch (lrcStateList[lrcStateIndex]) {
-                    case YEnum.LS_ORIGINAL:
-                        return YTranslateText.lsOriginal
-                    case YEnum.LS_TRANS:
-                        return YTranslateText.lsTrans
-                    case YEnum.LS_HIDE:
-                        return YTranslateText.lsHide
-                    case YEnum.LS_BILINGUAL:
-                    default:
-                        return YTranslateText.lsBilingual
-                    }
-                }
+                YAudioPlayerPlayBarSettingItem {
+                    id: id_lrc_state_button
+                    width: parent.width
 
-                onClicked: {
-                    lrcStateIndex = (lrcStateIndex + 1) % lrcStateList.length
-                    // TODO first time toast
-                    switch (lrcStateList[lrcStateIndex]) {
-                    case YEnum.LS_BILINGUAL:
-                        screenManager.reportAction('musicplayer_lrc_show')
-                        break
-                    case YEnum.LS_ORIGINAL:
-                        screenManager.reportAction('musicplayer_lrc_show')
-                        break
-                    case YEnum.LS_TRANS:
-                        screenManager.reportAction('musicplayer_lrc_show')
-                        break
-                    case YEnum.LS_HIDE:
-                    default:
-                        screenManager.reportAction('musicplayer_lrc_hide')
-                        break
-                    }
-                }
-            }
-
-            YAudioPlayerPlayBarSettingItem {
-                id: id_repeat_button
-                //visible: playerMode === YEnum.PM_AudioPlayer
-                imageName: "audioplayer/repeating26"
-                textItem.textFormat: YText.RichText
-                text: {
-                    switch (truncateAudioState) {
-                    case YEnum.TAS_ING:
-                        return ("<font color=\"%1\">A</font> - B").arg(YColors.red)
-                    case YEnum.TAS_PLAYING:
-                        return YTranslateText.tasStop
-                    case YEnum.TAS_Sentence:
-                        return YTranslateText.tasSentence
-                    case YEnum.TAS_STOP:
-                    default:
-                        return YTranslateText.tasPausing
-                    }
-                }
-
-                onClicked: {
-                    truncateAudioState = (truncateAudioState + 1) % YEnum.TAS_COUNT
-                    switch (truncateAudioState) {
-                    case YEnum.TAS_ING:
-                        mediaPlayerManager.startRepeat()
-                        break
-                    case YEnum.TAS_PLAYING:
-                        mediaPlayerManager.endRepeat()
-                        break
-                    case YEnum.TAS_Sentence:
-                        mediaPlayerManager.repeatSentence()
-                        break
-                    case YEnum.TAS_STOP:
-                    default:
-                        mediaPlayerManager.closeRepeat()
-                        break
-                    }
-                }
-            }
-            YAudioPlayerPlayBarSettingItem {
-                id: id_playback_rate_setting
-                //visible: playerMode !== YEnum.PM_AudioPlayer
-                imageName: "audioplayer/rate%1".arg(rateSettings[rateSettingIndex].rate.toFixed(1))
-                text: rateSettings[rateSettingIndex].title
-
-                onClicked: {
-                    rateSettingIndex = ((rateSettingIndex + 1) % rateSettings.length)
-                    let tmpIsPlaying = isPlaying
-                    mediaPlayerManager.playbackRate = rateSettings[rateSettingIndex].rate
-                    if (tmpIsPlaying) {
-                        mediaPlayerManager.onClickedPlay()
-                    }
-                }
-            }
-            YAudioPlayerPlayBarSettingItem {
-                id: id_shutdown_timer
-                visible: shutdownMode
-                imageName: "audioplayer/s_stop_single"
-                text: {
-                    if (!musicPlayer.shutdownTimerEnabled) return "定时关机"
-                    if (musicPlayer.shutdownAfterPlaylist) return "播放结束关机"
-                    return musicPlayer.shutdownTimerMinutes + "分钟后关机"
-                }
-                onClicked: {
-                    if (!musicPlayer.shutdownTimerEnabled) {
-                        musicPlayer.setShutdownTimerMinutes(shutdownDurations[0])
-                        musicPlayer.shutdownAfterPlaylist = false
-                    } else if (!musicPlayer.shutdownAfterPlaylist) {
-                        var index = shutdownDurations.indexOf(musicPlayer.shutdownTimerMinutes)
-                        if (index < shutdownDurations.length - 1) {
-                            musicPlayer.setShutdownTimerMinutes(shutdownDurations[index + 1])
-                        } else {
-                            musicPlayer.shutdownAfterPlaylist = true
+                    imageName: {
+                        switch (lrcStateList[lrcStateIndex]) {
+                        case YEnum.LS_ORIGINAL:
+                            return "audioplayer/original26"
+                        case YEnum.LS_TRANS:
+                            return "audioplayer/trans26"
+                        case YEnum.LS_HIDE:
+                            return "audioplayer/hide_lrc26"
+                        case YEnum.LS_BILINGUAL:
+                        default:
+                            return "audioplayer/bilingual26"
                         }
-                    } else {
-                        musicPlayer.cancelShutdownTimer()
-                        musicPlayer.shutdownAfterPlaylist = false
                     }
-                }
-                onPressAndHold: {
-                    shutdownMode = false
-                }
-            }
-
-            YAudioPlayerPlayBarSettingItem {
-                id: id_audio_sequence
-                visible: !shutdownMode
-                imageName: {
-                    switch (audioSequence) {
-                    case YEnum.AS_RANDOM:
-                        return "audioplayer/s_random26"
-                    case YEnum.AS_SINGLE:
-                        return "audioplayer/s_cycle"
-                    case YEnum.AS_ORDER:
-                        return "audioplayer/sequence26"
-                    case YEnum.AS_SINGLE_SHOT:
-                    default:
-                        return "audioplayer/s_stop_single"
+                    text: {
+                        switch (lrcStateList[lrcStateIndex]) {
+                        case YEnum.LS_ORIGINAL:
+                            return YTranslateText.lsOriginal
+                        case YEnum.LS_TRANS:
+                            return YTranslateText.lsTrans
+                        case YEnum.LS_HIDE:
+                            return YTranslateText.lsHide
+                        case YEnum.LS_BILINGUAL:
+                        default:
+                            return YTranslateText.lsBilingual
+                        }
                     }
-                }
 
-                text: {
-                    switch (audioSequence) {
-                    case YEnum.AS_ORDER:
-                        return YTranslateText.asOrder
-                    case YEnum.AS_RANDOM:
-                        return YTranslateText.asRandom
-                    case YEnum.AS_SINGLE:
-                        return YTranslateText.asSingle
-                    case YEnum.AS_SINGLE_SHOT:
-                    default:
-                        return YTranslateText.asSingleShot
+                    onClicked: {
+                        lrcStateIndex = (lrcStateIndex + 1) % lrcStateList.length
+                        // TODO first time toast
+                        switch (lrcStateList[lrcStateIndex]) {
+                        case YEnum.LS_BILINGUAL:
+                            screenManager.reportAction('musicplayer_lrc_show')
+                            break
+                        case YEnum.LS_ORIGINAL:
+                            screenManager.reportAction('musicplayer_lrc_show')
+                            break
+                        case YEnum.LS_TRANS:
+                            screenManager.reportAction('musicplayer_lrc_show')
+                            break
+                        case YEnum.LS_HIDE:
+                        default:
+                            screenManager.reportAction('musicplayer_lrc_hide')
+                            break
+                        }
                     }
                 }
 
-                onClicked: {
-                    settingManager.audioSequence = ((audioSequence + 1) % YEnum.AS_COUNT)
+                YAudioPlayerPlayBarSettingItem {
+                    id: id_repeat_button
+                    width: parent.width
+                    //visible: playerMode === YEnum.PM_AudioPlayer
+                    imageName: "audioplayer/repeating26"
+                    textItem.textFormat: YText.RichText
+                    text: {
+                        switch (truncateAudioState) {
+                        case YEnum.TAS_ING:
+                            return ("<font color=\"%1\">A</font> - B").arg(YColors.red)
+                        case YEnum.TAS_PLAYING:
+                            return YTranslateText.tasStop
+                        case YEnum.TAS_Sentence:
+                            return YTranslateText.tasSentence
+                        case YEnum.TAS_STOP:
+                        default:
+                            return YTranslateText.tasPausing
+                        }
+                    }
+
+                    onClicked: {
+                        truncateAudioState = (truncateAudioState + 1) % YEnum.TAS_COUNT
+                        switch (truncateAudioState) {
+                        case YEnum.TAS_ING:
+                            mediaPlayerManager.startRepeat()
+                            break
+                        case YEnum.TAS_PLAYING:
+                            mediaPlayerManager.endRepeat()
+                            break
+                        case YEnum.TAS_Sentence:
+                            mediaPlayerManager.repeatSentence()
+                            break
+                        case YEnum.TAS_STOP:
+                        default:
+                            mediaPlayerManager.closeRepeat()
+                            break
+                        }
+                    }
                 }
-                onPressAndHold: {
-                    shutdownMode = true
+                YAudioPlayerPlayBarSettingItem {
+                    id: id_playback_rate_setting
+                    width: parent.width
+                    //visible: playerMode !== YEnum.PM_AudioPlayer
+                    imageName: "audioplayer/rate%1".arg(rateSettings[rateSettingIndex].rate.toFixed(1))
+                    text: rateSettings[rateSettingIndex].title
+
+                    onClicked: {
+                        rateSettingIndex = ((rateSettingIndex + 1) % rateSettings.length)
+                        let tmpIsPlaying = isPlaying
+                        mediaPlayerManager.playbackRate = rateSettings[rateSettingIndex].rate
+                        if (tmpIsPlaying) {
+                            mediaPlayerManager.onClickedPlay()
+                        }
+                    }
+                }
+                YAudioPlayerPlayBarSettingItem {
+                    id: id_shutdown_timer
+                    width: parent.width
+                    imageName: "audioplayer/s_stop_single"
+                    text: {
+                        if (!musicPlayer.shutdownTimerEnabled) return "定时关机"
+                        if (musicPlayer.shutdownAfterPlaylist) return "播放结束关机"
+                        return musicPlayer.shutdownTimerMinutes + "分钟后关机"
+                    }
+                    onClicked: {
+                        if (!musicPlayer.shutdownTimerEnabled) {
+                            musicPlayer.setShutdownTimerMinutes(shutdownDurations[0])
+                            musicPlayer.shutdownAfterPlaylist = false
+                        } else if (!musicPlayer.shutdownAfterPlaylist) {
+                            var index = shutdownDurations.indexOf(musicPlayer.shutdownTimerMinutes)
+                            if (index < shutdownDurations.length - 1) {
+                                musicPlayer.setShutdownTimerMinutes(shutdownDurations[index + 1])
+                            } else {
+                                musicPlayer.shutdownAfterPlaylist = true
+                            }
+                        } else {
+                            musicPlayer.cancelShutdownTimer()
+                            musicPlayer.shutdownAfterPlaylist = false
+                        }
+                    }
+                }
+
+                YAudioPlayerPlayBarSettingItem {
+                    id: id_audio_sequence
+                    width: parent.width
+                    imageName: {
+                        switch (audioSequence) {
+                        case YEnum.AS_RANDOM:
+                            return "audioplayer/s_random26"
+                        case YEnum.AS_SINGLE:
+                            return "audioplayer/s_cycle"
+                        case YEnum.AS_ORDER:
+                            return "audioplayer/sequence26"
+                        case YEnum.AS_SINGLE_SHOT:
+                        default:
+                            return "audioplayer/s_stop_single"
+                        }
+                    }
+
+                    text: {
+                        switch (audioSequence) {
+                        case YEnum.AS_ORDER:
+                            return YTranslateText.asOrder
+                        case YEnum.AS_RANDOM:
+                            return YTranslateText.asRandom
+                        case YEnum.AS_SINGLE:
+                            return YTranslateText.asSingle
+                        case YEnum.AS_SINGLE_SHOT:
+                        default:
+                            return YTranslateText.asSingleShot
+                        }
+                    }
+
+                    onClicked: {
+                        settingManager.audioSequence = ((audioSequence + 1) % YEnum.AS_COUNT)
+                    }
+                }
+
+                YAudioPlayerPlayBarSettingItem {
+                    width: parent.width
+                    imageName: "commons/download"
+                    text: "获取网络歌词"
+                    // The C++ eligibility method has no notify signal; re-evaluate when the menu opens.
+                    enabled: id_player_bar_item.state === "show" && !musicPlayer.hasTimeline && !mediaPlayerManager.hasLrc && musicPlayer.canFetchLyrics()
+                    onClicked: {
+                        close()
+                        id_player_bar_item.onlineLyricsRequested()
+                    }
                 }
             }
         }

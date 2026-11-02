@@ -41,7 +41,7 @@ YSettingItemPage {
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.left: parent.left
                     anchors.leftMargin: 10
-                    color: id_mode_none.isSelected ? "#62A8EA" : "#FFFFFF"
+                    color: id_mode_none.isSelected ? "#62A8EA" : YColors.white
                 }
 
                 Rectangle {
@@ -86,7 +86,7 @@ YSettingItemPage {
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.left: parent.left
                     anchors.leftMargin: 10
-                    color: id_mode_single.isSelected ? "#62A8EA" : "#FFFFFF"
+                    color: id_mode_single.isSelected ? "#62A8EA" : YColors.white
                 }
 
                 Rectangle {
@@ -131,7 +131,7 @@ YSettingItemPage {
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.left: parent.left
                     anchors.leftMargin: 10
-                    color: id_mode_cycle.isSelected ? "#62A8EA" : "#FFFFFF"
+                    color: id_mode_cycle.isSelected ? "#62A8EA" : YColors.white
                 }
 
                 Rectangle {
@@ -353,7 +353,7 @@ YSettingItemPage {
                                 if (sec < 3600) return Math.floor(sec / 60) + "分钟";
                                 return Math.floor(sec / 3600) + "小时";
                             }
-                            color: "#FFFFFF"
+                            color: YColors.white
                             font.pixelSize: 14
                         }
 

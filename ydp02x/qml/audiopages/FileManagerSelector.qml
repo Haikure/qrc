@@ -28,9 +28,18 @@ YPage {
         fileManager.changeDir("");
     }
 
-    onBackButtonClicked: {
-        fileSelectionCancelled();
-        id_pop_container.popItemObject = null;
+    onBackButtonClicked: fileSelectionCancelled()
+
+    // 多选确认：构建绝对路径（; 拼接），与单选共用 fileSelected 信号。
+    function confirmSelection() {
+        if (!allowMultiSelect || selectedFiles.length === 0)
+            return;
+        var paths = [];
+        for (var i = 0; i < selectedFiles.length; i++)
+            paths.push(fileManager.getCurrentPathString() + "/" + selectedFiles[i]);
+        selectedFilePath = paths.join(";");
+        fileSelected(selectedFilePath);
+        backButtonClicked();
     }
 
     YVerticalTitleBar {
@@ -40,17 +49,26 @@ YPage {
             if (visible && fileManager.canCdUp()) {
                 fileManager.changeDir('..');
             } else {
-                fileSelectionCancelled();
                 backButtonClicked();
                 fileManager.reset();
             }
         }
     }
 
-    YBaseListView {
-        id: id_files_view
-        anchors.fill: parent
+    FileManagerBreadcrumb {
+        anchors.left: parent.left
         anchors.leftMargin: 54
+        anchors.right: parent.right
+        anchors.rightMargin: 10
+    }
+
+    FileManagerListView {
+        id: id_files_view
+        onNavigated: id_error_tip.visible = false
+        anchors.fill: parent
+        anchors.topMargin: 46
+        anchors.leftMargin: 54
+        // 多选时左侧栏多一个打勾按钮（与文件管理器左侧操作栏一致），列表左边距已留 54。
         anchors.rightMargin: 10
         spacing: 8
         model: fileManager
@@ -61,31 +79,7 @@ YPage {
             if (!moving && atYEnd && fileManager.hasMore)
                 fileManager.loadMore();
         }
-        header: id_header_component
         footer: fileManager.hasMore ? id_listview_loading_footer : id_listview_loaded_footer
-        onBusyingChanged: {
-            if (!busying)
-                id_files_view.positionViewAtBeginning();
-        }
-
-        Component {
-            id: id_header_component
-            Item {
-                width: id_files_view.width
-                implicitHeight: 50
-                YTextBase {
-                    color: YColors.grayText
-                    font.pixelSize: 16
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: parent.width
-                    visible: !id_error_tip.visible
-                    elide: YTextBase.ElideLeft
-                    text: "选择文件"
-                    textFormat: Text.RichText
-                }
-            }
-        }
-
         Component {
             id: id_listview_loading_footer
             YListViewLoadMoreFooter {}
@@ -139,16 +133,13 @@ YPage {
                             if (allowMultiSelect) {
                                 // 多选模式
                                 var index = selectedFiles.indexOf(model.fileName);
-                                if (index === -1) {
-                                    // 添加到选择列表
-                                    selectedFiles.push(model.fileName);
-                                } else {
-                                    // 从选择列表移除
-                                    selectedFiles.splice(index, 1);
-                                }
-                                // 更新 UI
-                                id_files_view.model.data(id_files_view.model.index(model.index, 0),
-                                    id_files_view.model.roles.ExtensionIcon);
+                                // 必须整体重新赋值：property var 数组原地 push/splice 不会发 changed，
+                                // 确认按钮的 selectedFiles.length 绑定会一直停在 0（按钮因此永远不可用）。
+                                if (index === -1)
+                                    selectedFiles = selectedFiles.concat([model.fileName]);
+                                else
+                                    selectedFiles = selectedFiles.filter(function(name) { return name !== model.fileName; });
+
                             } else {
                                 // 单选模式
                                 selectedFilePath = fileManager.getCurrentPathString() + "/" + model.fileName;
@@ -166,16 +157,13 @@ YPage {
                         if (allowMultiSelect) {
                             // 多选模式
                             var index = selectedFiles.indexOf(model.fileName);
-                            if (index === -1) {
-                                // 添加到选择列表
-                                selectedFiles.push(model.fileName);
-                            } else {
-                                // 从选择列表移除
-                                selectedFiles.splice(index, 1);
-                            }
-                            // 更新 UI
-                            id_files_view.model.data(id_files_view.model.index(model.index, 0),
-                                id_files_view.model.roles.ExtensionIcon);
+                            // 必须整体重新赋值：property var 数组原地 push/splice 不会发 changed，
+                            // 确认按钮的 selectedFiles.length 绑定会一直停在 0（按钮因此永远不可用）。
+                            if (index === -1)
+                                selectedFiles = selectedFiles.concat([model.fileName]);
+                            else
+                                selectedFiles = selectedFiles.filter(function(name) { return name !== model.fileName; });
+
                         } else {
                             // 单选模式
                                 selectedFilePath = fileManager.getCurrentPathString() + "/" + model.fileName;
@@ -188,61 +176,45 @@ YPage {
         }
     }
 
-    // 底部操作栏 - 仅在多选模式下显示
+    // 多选操作放在左侧栏（与文件管理器编辑文件名时的侧栏按钮一致），不再占用底栏。
+    // 左上角返回 = 取消；打勾 = 确认；勾下方是已选数量。
     Item {
-        id: id_bottom_toolbar
-        anchors.bottom: parent.bottom
-        anchors.left: parent.left
-        anchors.right: parent.right
-        height: 50
+        id: id_multi_actions
         visible: allowMultiSelect
-
-        Rectangle {
-            anchors.fill: parent
-            color: "#2B3A4A"
+        width: 30
+        anchors {
+            left: parent.left
+            leftMargin: 10
+            verticalCenter: parent.verticalCenter
         }
 
-        Row {
-            anchors.centerIn: parent
-            spacing: 20
+        YIconButton {
+            id: id_confirm_button
+            width: 30
+            height: 30
+            radius: 6
+            anchors.horizontalCenter: parent.horizontalCenter
+            source: "textbook/select-check"
+            sourceSize: Qt.size(20, 20)
+            enabled: selectedFiles.length > 0
+            opacity: enabled ? 1.0 : 0.35
+            onValidClicked: id_container_index.confirmSelection()
+        }
 
-            YButton {
-                text: "取消"
-                width: 80
-                height: 36
-                radius: 6
-                color: "#5A6B7D"
-                textColor: "#FFFFFF"
-                onClicked: {
-                    fileSelectionCancelled();
-                    backButtonClicked();
-                }
+        Text {
+            id: id_selected_count
+            anchors {
+                top: id_confirm_button.bottom
+                topMargin: 3
+                horizontalCenter: parent.horizontalCenter
             }
-
-            YButton {
-                text: "确认 (" + selectedFiles.length + ")"
-                width: 120
-                height: 36
-                radius: 6
-                color: "#2B5278"
-                textColor: "#FFFFFF"
-                enabled: selectedFiles.length > 0
-                onClicked: {
-                    if (selectedFiles.length > 0) {
-                        // 构建完整路径
-                        var paths = [];
-                        for (var i = 0; i < selectedFiles.length; i++) {
-                            paths.push(fileManager.getCurrentPathString() + "/" + selectedFiles[i]);
-                        }
-                        selectedFilePath = paths.join(";");
-                        fileSelected(selectedFilePath);
-                        backButtonClicked();
-                    }
-                }
-            }
+            text: selectedFiles.length
+            color: selectedFiles.length > 0 ? "#E6EDF3" : "#8A9BAE"
+            font.pixelSize: 11
+            font.family: qmlGlobal.fontFamilyZhCn
+            horizontalAlignment: Text.AlignHCenter
         }
     }
-
 
     YText {
         id: id_error_tip
@@ -262,25 +234,14 @@ YPage {
         }
     }
 
-    YOneButtonDialog {
-        id: id_reload_dialog
-        z: parent.z + 1
-        anchors.fill: parent
-        tipItem.text: "当前文件夹内容发生变化"
-        buttonItem.text: "重新加载"
-        showClose: false
-        onClicked: {
-            currentMode = kNormal;
-            fileManager.reload();
-            close();
-        }
 
-        Connections {
-            target: fileManager
-            function onDirectoryChanged() {
-                if (!id_reload_dialog.isShowing && fileManager.shouldNotifyDirChanged())
-                    id_reload_dialog.show();
-            }
+    // 多选只在当前目录内有效：换目录时清空已选，避免确认时用新目录路径拼旧文件名。
+    Connections {
+        target: fileManager
+        function onDirectoryLoaded() {
+            if (selectedFiles.length > 0)
+                selectedFiles = [];
         }
     }
+
 }

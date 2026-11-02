@@ -24,6 +24,20 @@ Item {
     clip: true
 
     signal exitRequested()
+    signal openRequested()
+
+    YVideoMediaSession {
+        player: id_player
+        ownerId: "penmods.video.embedded"
+        title: externalPlayer.title
+        playing: id_page.playing
+        paused: id_page.paused
+        millisecondsPerUnit: 1000
+        onOpenRequested: {
+            id_page.setOsdVisible(true);
+            id_page.openRequested();
+        }
+    }
 
     readonly property bool   playing: id_player.playbackState === FFmpegPlayer.VideoPlayer.PlayingState
     readonly property bool   paused: id_player.playbackState === FFmpegPlayer.VideoPlayer.PausedState
@@ -131,7 +145,10 @@ Item {
     FFmpegPlayer.VideoPlayer {
         id: id_player
         anchors.fill: parent
-        downsamplingEnabled: !id_page.zoomMode
+        Component.onCompleted: {
+            if ("downsamplingEnabled" in id_player)
+                id_player.downsamplingEnabled = Qt.binding(function() { return !id_page.zoomMode; });
+        }
         smooth: true
         scale: Math.pow(2, id_page.zoomLevel)
         transformOrigin: Item.Center

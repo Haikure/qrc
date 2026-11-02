@@ -222,7 +222,9 @@ Item {
     function createPage(componentUrl, popStackId, options, properties, onReady) {
         closeSameItem(popStackId)
 
-        const component = Qt.createComponent(componentUrl)
+        const component = options && options.asynchronous
+                ? Qt.createComponent(componentUrl, Component.Asynchronous)
+                : Qt.createComponent(componentUrl)
         const pending = {
             "cancelled": false,
             "component": component,

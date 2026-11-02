@@ -123,7 +123,7 @@ Item {
                                 width: parent.width
                                 height: 46
                                 anchors.bottom: parent.bottom
-                                color: "#000000"
+                                color: YColors.black
                                 opacity: 0.5
                                 visible:  (settingManager.studyingBookId === model.modelData.bookId) || model.modelData.isExpirated
                             }

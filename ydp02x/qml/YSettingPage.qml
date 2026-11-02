@@ -1,6 +1,7 @@
 import "./commons"
 import "./components"
 import "./i18n"
+import "./settingpages"
 import QtQuick 2.12
 import com.youdao.pen 1.0
 
@@ -9,6 +10,76 @@ YPage {
     pageIndex: YEnum.PageIndex.Setting
 
     property int currentShowIndex: -1
+
+    // Array order controls the menu; settingIndex is only the legacy navigation key.
+    // This registry describes navigation entries, not the values owned by individual pages.
+    readonly property var settingRegistry: [
+        { id: "network", settingIndex: YEnum.SettingIndex.Network, label: YTranslateText.network,
+            group: qsTr("网络与连接"), icon: res.getDisk("settings/ic_network"),
+            page: "settingpages/YSettingWifi", logAction: "network" },
+        { id: "bluetooth", settingIndex: YEnum.SettingIndex.Bluetooth, label: YTranslateText.bluetooth,
+            group: qsTr("网络与连接"), icon: res.getDisk("settings/ic_bluetooth"),
+            page: "settingpages/YSettingBluetooth", logAction: "bluetooth" },
+        { id: "screen", settingIndex: YEnum.SettingIndex.Brightness, label: qsTr("屏幕"),
+            group: qsTr("显示与输入"), icon: res.get("setting/screen"),
+            page: "settingpages/YSettingBrightness", logAction: "brightness", refreshVolumeAndLcd: true },
+        { id: "volume", settingIndex: YEnum.SettingIndex.Volume, label: YTranslateText.volume,
+            group: qsTr("显示与输入"), icon: res.getDisk("settings/ic_sounds"),
+            page: "settingpages/YSettingVolume", logAction: "sound", refreshVolumeAndLcd: true },
+        { id: "handedness", settingIndex: YEnum.SettingIndex.Handedness, label: YTranslateText.handedness,
+            group: qsTr("显示与输入"), icon: res.getDisk("settings/ic_handedness"),
+            page: "settingpages/YSettingHandedness", logAction: "direction" },
+        { id: "keyboard", settingIndex: 209, label: qsTr("键盘设置"),
+            group: qsTr("显示与输入"), icon: res.get("setting/advanced"),
+            page: "settingpages/KeyboardSettingPage", hideWhenAntiEmbs: true },
+        { id: "wallpaper", settingIndex: 208, label: qsTr("壁纸"),
+            group: qsTr("显示与输入"), icon: res.get("setting/background"),
+            page: "settingpages/WallpaperSettingPage", hideWhenAntiEmbs: true },
+        // Keep the LED and scan-query controls available in antiEmbs mode, as before.
+        { id: "torch", settingIndex: 207, label: qsTr("笔头 LED"),
+            group: qsTr("显示与输入"), icon: res.get("setting/torch"), page: "settingpages/Torch" },
+        { id: "translate", settingIndex: YEnum.SettingIndex.Translate, label: YTranslateText.translate,
+            group: qsTr("语言与学习"), icon: res.getDisk("settings/ic_translate"),
+            page: "settingpages/YSettingTranslate", logAction: "translate",
+            available: qmlGlobal.checkFeature(YEnum.FEATURE_LANG_JPN)
+                || qmlGlobal.checkFeature(YEnum.FEATURE_LANG_KOR)
+                || qmlGlobal.checkFeature(YEnum.FEATURE_LANG_ES) },
+        { id: "dictionary", settingIndex: YEnum.SettingIndex.Dict, label: YTranslateText.dictionary,
+            group: qsTr("语言与学习"), icon: res.getDisk("settings/ic_dict"),
+            page: "settingpages/YSettingDict", logAction: "dict" },
+        { id: "pronunciation", settingIndex: YEnum.SettingIndex.Pronunc, label: YTranslateText.pronunc,
+            group: qsTr("语言与学习"), icon: res.getDisk("settings/ic_pronunc"),
+            page: "settingpages/YSettingPronunc", logAction: "pronounce" },
+        { id: "language", settingIndex: YEnum.SettingIndex.Language, label: YTranslateText.deviceLanguage,
+            group: qsTr("语言与学习"), icon: res.getDisk("settings/ic_language"),
+            page: "settingpages/YSettingLanguage", logAction: "language",
+            available: !qmlGlobal.checkFeature(YEnum.FEATURE_SERIAL_D2) },
+        { id: "query", settingIndex: 205, label: qsTr("扫描查询"),
+            group: qsTr("语言与学习"), icon: res.get("setting/scan"), page: "settingpages/QuerySettingPage" },
+        { id: "battery", settingIndex: 201, label: qsTr("电池信息"),
+            group: qsTr("系统"), icon: res.get("setting/battery"),
+            page: "settingpages/BatteryInfoPage", hideWhenAntiEmbs: true },
+        { id: "security", settingIndex: 206, label: qsTr("安全"),
+            group: qsTr("系统"), icon: res.get("setting/lock"),
+            page: "settingpages/LockSettingPage", needsPassword: true, hideWhenAntiEmbs: true },
+        { id: "tweaks", settingIndex: 203, label: qsTr("系统微调"),
+            group: qsTr("系统"), icon: res.get("setting/sys_tweak"),
+            page: "settingpages/SystemTweakSettingPage", hideWhenAntiEmbs: true },
+        { id: "update", settingIndex: YEnum.SettingIndex.Update, label: YTranslateText.update,
+            group: qsTr("系统"), icon: res.getDisk("settings/ic_update"),
+            page: "settingpages/YSettingUpdate", logAction: "update" },
+        { id: "about", settingIndex: YEnum.SettingIndex.About, label: YTranslateText.about,
+            group: qsTr("系统"), icon: res.getDisk("settings/ic_about"),
+            page: "settingpages/YSettingAbout", logAction: "about" },
+        // Retain the host's direct navigation target without adding a menu entry.
+        { id: "multiline", settingIndex: YEnum.SettingIndex.MultiLines, label: YTranslateText.multi,
+            group: qsTr("语言与学习"), icon: "", showInMenu: false,
+            page: "settingpages/YSettingMultiLines", logAction: "multiline" }
+    ]
+
+    function settingAvailable(entry) {
+        return entry.available !== false && !(antiEmbs.active && entry.hideWhenAntiEmbs);
+    }
 
     function showSettingPage(settingPage, needPwd, scene, popThisPage) {
         if (needPwd && locker.enabled && !(scene && !locker.getScene(scene))) {
@@ -58,84 +129,19 @@ YPage {
     }
 
     function settingItemClicked(index, popThisPage = false) {
-        if (antiEmbs.active && (index === 201 || index === 203 || index === 206 || index === 208 || index === 209))
+        for (var i = 0; i < settingRegistry.length; ++i) {
+            var entry = settingRegistry[i];
+            if (entry.settingIndex !== index)
+                continue;
+            if (!settingAvailable(entry))
+                return;
+            currentShowIndex = index;
+            if (entry.logAction)
+                logManager.sendHttpLog("action=settings_" + entry.logAction + "_click");
+            if (entry.refreshVolumeAndLcd)
+                settingManager.updateVolumeAndLcd();
+            showSettingPage(entry.page, entry.needsPassword === true, undefined, popThisPage);
             return;
-        console.log("YSettingPage.qml===settingItemClicked===index: ", index);
-        currentShowIndex = index;
-        let component = null;
-        switch (index) {
-        case YEnum.SettingIndex.Network:
-            logManager.sendHttpLog("action=settings_network_click");
-            showSettingPage("settingpages/YSettingWifi", false, undefined, popThisPage);
-            break;
-        case YEnum.SettingIndex.Bluetooth:
-            logManager.sendHttpLog("action=settings_bluetooth_click");
-            showSettingPage("settingpages/YSettingBluetooth", false, undefined, popThisPage);
-            break;
-        case YEnum.SettingIndex.Volume:
-            logManager.sendHttpLog("action=settings_sound_click");
-            settingManager.updateVolumeAndLcd();
-            showSettingPage("settingpages/YSettingVolume", false, undefined, popThisPage);
-            break;
-        case YEnum.SettingIndex.Brightness:
-            logManager.sendHttpLog("action=settings_brightness_click");
-            settingManager.updateVolumeAndLcd();
-            showSettingPage("settingpages/YSettingBrightness", false, undefined, popThisPage);
-            break;
-        case YEnum.SettingIndex.Translate:
-            logManager.sendHttpLog("action=settings_translate_click");
-            showSettingPage("settingpages/YSettingTranslate", false, undefined, popThisPage);
-            break;
-        case YEnum.SettingIndex.Dict:
-            logManager.sendHttpLog("action=settings_dict_click");
-            showSettingPage("settingpages/YSettingDict", false, undefined, popThisPage);
-            break;
-        case YEnum.SettingIndex.Pronunc:
-            logManager.sendHttpLog("action=settings_pronounce_click");
-            showSettingPage("settingpages/YSettingPronunc", false, undefined, popThisPage);
-            break;
-        case YEnum.SettingIndex.Handedness:
-            logManager.sendHttpLog("action=settings_direction_click");
-            showSettingPage("settingpages/YSettingHandedness", false, undefined, popThisPage);
-            break;
-        case YEnum.SettingIndex.Language:
-            logManager.sendHttpLog("action=settings_language_click");
-            showSettingPage("settingpages/YSettingLanguage", false, undefined, popThisPage);
-            break;
-        case YEnum.SettingIndex.MultiLines:
-            logManager.sendHttpLog("action=settings_multiline_click");
-            showSettingPage("settingpages/YSettingMultiLines", false, undefined, popThisPage);
-            break;
-        case YEnum.SettingIndex.Update:
-            logManager.sendHttpLog("action=settings_update_click");
-            showSettingPage("settingpages/YSettingUpdate", false, undefined, popThisPage);
-            break;
-        case YEnum.SettingIndex.About:
-            logManager.sendHttpLog("action=settings_about_click");
-            showSettingPage("settingpages/YSettingAbout", false, undefined, popThisPage);
-            break;
-        case 201:
-            showSettingPage("settingpages/BatteryInfoPage", false, undefined, popThisPage);
-            break;
-        case 203:
-            showSettingPage("settingpages/SystemTweakSettingPage", false, undefined, popThisPage);
-            break;
-        case 205:
-            showSettingPage("settingpages/QuerySettingPage", false, undefined, popThisPage);
-            break;
-        case 206:
-            showSettingPage("settingpages/LockSettingPage", true, undefined, popThisPage);
-            break;
-        case 207:
-            showSettingPage("settingpages/Torch", false, undefined, popThisPage);
-            break;
-        case 208:
-            if (!antiEmbs.active)
-                showSettingPage("settingpages/WallpaperSettingPage", false, undefined, popThisPage);
-            break;
-        case 209:
-            showSettingPage("settingpages/KeyboardSettingPage", false, undefined, popThisPage);
-            break;
         }
     }
 
@@ -148,26 +154,28 @@ YPage {
 
         anchors.fill: parent
 
-        GridView {
-            id: id_setting_gridview
-
-            readonly property bool isMoveToUp: (verticalVelocity > 0)
+        ListView {
+            id: id_setting_listview
 
             anchors.fill: parent
             anchors.leftMargin: 54
             anchors.rightMargin: 10
             clip: true
-            cellWidth: 256
-            cellHeight: 58
+            section.property: "settingGroup"
+            section.criteria: ViewSection.FullString
+            section.delegate: YSettingItemTitle {
+                width: id_setting_listview.width
+                title: section
+            }
             model: id_setting_model
             cacheBuffer: 1000
 
             delegate: YMouseArea {
                 id: id_item_delegate
 
-                width: id_setting_gridview.cellWidth
-                height: id_setting_gridview.cellHeight
-                objectName: "YSettingPage.qml_delegate_index" + index
+                width: id_setting_listview.width
+                height: 58
+                objectName: "YSettingPage.qml_setting_" + settingId
                 onClicked: {
                     settingItemClicked(settingIndex);
                 }
@@ -190,8 +198,6 @@ YPage {
                     }
 
                     YTextMedium {
-                        //    return YTranslateText.brightness
-
                         id: id_label
 
                         anchors.left: id_icon.right
@@ -199,50 +205,7 @@ YPage {
                         anchors.right: parent.right
                         anchors.rightMargin: 20
                         anchors.verticalCenter: parent.verticalCenter
-                        text: {
-                            switch (settingIndex) {
-                            case YEnum.SettingIndex.Network:
-                                return YTranslateText.network;
-                            case YEnum.SettingIndex.Bluetooth:
-                                return YTranslateText.bluetooth;
-                            case YEnum.SettingIndex.Volume:
-                                return YTranslateText.volume;
-                            case YEnum.SettingIndex.Brightness:
-                                return "屏幕";
-                            case YEnum.SettingIndex.Translate:
-                                return YTranslateText.translate;
-                            case YEnum.SettingIndex.Dict:
-                                return YTranslateText.dictionary;
-                            case YEnum.SettingIndex.Pronunc:
-                                return YTranslateText.pronunc;
-                            case YEnum.SettingIndex.Handedness:
-                                return YTranslateText.handedness;
-                            case YEnum.SettingIndex.Language:
-                                return YTranslateText.deviceLanguage;
-                            case YEnum.SettingIndex.MultiLines:
-                                return YTranslateText.multi;
-                            case YEnum.SettingIndex.Update:
-                                return YTranslateText.update;
-                            case YEnum.SettingIndex.About:
-                                return YTranslateText.about;
-                            case 201:
-                                return "电池信息";
-                            case 203:
-                                return "系统微调";
-                            case 205:
-                                return "扫描查询";
-                            case 206:
-                                return "安全";
-                            case 207:
-                                return "笔头 LED";
-                            case 208:
-                                return "壁纸";
-                            case 209:
-                                return "键盘设置";
-                            default:
-                                return "";
-                            }
-                        }
+                        text: settingLabel
                         elide: YText.ElideRight
                     }
 
@@ -251,12 +214,12 @@ YPage {
             }
 
             header: YSpacing {
-                width: id_setting_gridview.width
+                width: id_setting_listview.width
                 implicitHeight: 12
             }
 
             footer: YSpacing {
-                width: id_setting_gridview.width
+                width: id_setting_listview.width
                 implicitHeight: 12
             }
 
@@ -333,35 +296,24 @@ YPage {
     }
 
     function refreshSettingModel() {
+        if (!id_setting_model)
+            return;
         id_setting_model.clear();
-        id_setting_model.append({"settingIndex": YEnum.SettingIndex.Network, "settingIcon": res.getDisk("settings/ic_network")});
-        id_setting_model.append({"settingIndex": YEnum.SettingIndex.Bluetooth, "settingIcon": res.getDisk("settings/ic_bluetooth")});
-        id_setting_model.append({"settingIndex": YEnum.SettingIndex.Volume, "settingIcon": res.getDisk("settings/ic_sounds")});
-        id_setting_model.append({"settingIndex": YEnum.SettingIndex.Brightness, "settingIcon": res.get("setting/screen")});
-        if (qmlGlobal.checkFeature(YEnum.FEATURE_LANG_JPN)
-                || qmlGlobal.checkFeature(YEnum.FEATURE_LANG_KOR)
-                || qmlGlobal.checkFeature(YEnum.FEATURE_LANG_ES)) {
-            id_setting_model.append({"settingIndex": YEnum.SettingIndex.Translate, "settingIcon": res.getDisk("settings/ic_translate")});
+        for (var i = 0; i < settingRegistry.length; ++i) {
+            var entry = settingRegistry[i];
+            if (entry.showInMenu === false || !settingAvailable(entry))
+                continue;
+            id_setting_model.append({
+                "settingIndex": entry.settingIndex,
+                "settingIcon": entry.icon,
+                "settingLabel": entry.label,
+                "settingGroup": entry.group,
+                "settingId": entry.id
+            });
         }
-        id_setting_model.append({"settingIndex": YEnum.SettingIndex.Dict, "settingIcon": res.getDisk("settings/ic_dict")});
-        id_setting_model.append({"settingIndex": YEnum.SettingIndex.Pronunc, "settingIcon": res.getDisk("settings/ic_pronunc")});
-        id_setting_model.append({"settingIndex": YEnum.SettingIndex.Handedness, "settingIcon": res.getDisk("settings/ic_handedness")});
-        if (!qmlGlobal.checkFeature(YEnum.FEATURE_SERIAL_D2))
-            id_setting_model.append({"settingIndex": YEnum.SettingIndex.Language, "settingIcon": res.getDisk("settings/ic_language")});
-        if (!antiEmbs.active)
-            id_setting_model.append({"settingIndex": 206, "settingIcon": res.get("setting/lock")});
-        id_setting_model.append({"settingIndex": 205, "settingIcon": res.get("setting/scan")});
-        if (!antiEmbs.active)
-            id_setting_model.append({"settingIndex": 201, "settingIcon": res.get("setting/battery")});
-        id_setting_model.append({"settingIndex": 207, "settingIcon": res.get("setting/torch")});
-        if (!antiEmbs.active) {
-            id_setting_model.append({"settingIndex": 208, "settingIcon": res.get("setting/background")});
-            id_setting_model.append({"settingIndex": 203, "settingIcon": res.get("setting/sys_tweak")});
-            id_setting_model.append({"settingIndex": 209, "settingIcon": res.get("setting/advanced")});
-        }
-        id_setting_model.append({"settingIndex": YEnum.SettingIndex.Update, "settingIcon": res.getDisk("settings/ic_update")});
-        id_setting_model.append({"settingIndex": YEnum.SettingIndex.About, "settingIcon": res.getDisk("settings/ic_about")});
     }
+
+    onSettingRegistryChanged: refreshSettingModel()
 
     Connections {
         target: antiEmbs

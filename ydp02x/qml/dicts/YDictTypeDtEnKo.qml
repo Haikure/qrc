@@ -50,7 +50,7 @@ YDictTypeBase {
             font.family: qmlGlobal.fontFamilyEnUs
             font.pixelSize: 26
             wrapMode: YTextBase.Wrap
-            color: "#909199"
+            color: YColors.grayText
             width: parent.width
             height: paintedHeight
             text: {

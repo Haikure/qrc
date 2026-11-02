@@ -1,5 +1,7 @@
 import QtQuick 2.15
 
+// 气泡里的多文件预览（#21-3）：数量头 + 每个文件一行（名称/大小）。
+// 只读：删除/清空只在草稿条的 AttachmentChipsBar 里做。
 Column {
     id: root
 
@@ -9,7 +11,17 @@ Column {
     signal longPressed(real globalX, real globalY)
 
     spacing: 6
-    visible: attachments && attachments.length > 0
+    visible: attachments && fileCount > 0
+
+    readonly property int fileCount: !attachments ? 0
+                                        : attachments.count !== undefined ? attachments.count
+                                        : attachments.length !== undefined ? attachments.length : 0
+    readonly property int fileWidth: 210
+
+    // Column（QQuickPositioner）的 implicitWidth/Height 在 QML 里是只读的，不能赋值；
+    // 它的 implicit 尺寸会按子项自动计算（header/每行都是 fileWidth 宽），无需再写。
+    // 之前误加 `implicitWidth: fileWidth` 会让整个 FileAttachmentList 加载失败，
+    // 进而使 AttachmentMessage / AI 助手页无法实例化。
 
     function formatIcon(name) {
         var lowerName = name ? name.toLowerCase() : "";
@@ -28,12 +40,27 @@ Column {
         return Math.max(1, Math.round(bytes / 1024)) + " KB";
     }
 
+    // 多文件时的数量头。
+    Text {
+        id: header
+        visible: root.fileCount > 1
+        width: root.fileWidth
+        // Text 的 implicit 尺寸是只读的（由文本计算），不能再赋值；width/height 已显式给出。
+        height: visible ? 14 : 0
+        text: "共 " + root.fileCount + " 个文件"
+        color: "#8FA3B5"
+        font.pixelSize: 9
+        font.family: root.fontFamily || ""
+    }
+
     Repeater {
         model: root.attachments || []
 
         Rectangle {
-            width: 210
+            width: root.fileWidth
+            implicitWidth: root.fileWidth
             height: 42
+            implicitHeight: 42
             radius: 6
             color: "#17222D"
             border.width: 1

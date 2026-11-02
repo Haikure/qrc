@@ -7,7 +7,7 @@ import "../i18n"
 YLoader {
     id: id_setting_update_check_network_loader
     anchors.fill: parent
-    active: !wifiManager.internetConnect
+    active: (!wifiManager.internetConnect && !updater.hasManifest && !updater.checkCancelled)
             || (YEnum.UPDATE_ERROR_NO_CONNECTION === otaStatus)
     signal checkNetwork()
 

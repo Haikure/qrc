@@ -23,9 +23,22 @@ Item {
     property var currentItem: null
     property var currentRoute: null
     property var backgroundItem: null
-    property int transitionDuration: 180
-    property real transitionDistance: 12
-    property real transitionStartOpacity: 0.96
+    // 整屏滑动。原来是 12px / 180ms：12px 只有屏宽的百分之几，平均 0.067px/ms、
+    // 一帧走 3px —— 低于能被感知为"滑动"的门槛，看上去只是抖了一下。
+    // 位移也必须等于屏宽：只滑一半的话，页面在动画结束时还有大半在屏上，
+    // 紧接着被 _disposeEntry() 隐藏，必然看到跳变（位移越大跳得越狠）；
+    // 整屏位移是在页面完全移出屏幕之后才隐藏，没有跳变。
+    // 时长随之从 180ms 放宽到 240ms（320px ⇒ 平均 1.33px/ms），12px 时代的
+    // 180ms 摊到整屏上太赶。
+    property int transitionDuration: 240
+    // 出栈单独用更短的时长：退出比进入更不该让人等，而且 InQuad 这类加速曲线
+    // 的加速度要靠"总时长短"才显得出来（见 popAnimation 注释）。
+    property int popDuration: 180
+    // YNavigator 本身满屏，root.width 就是屏宽。
+    property real transitionDistance: root.width
+    // 整屏滑动时不能再让页面半透明：0.96 会让整个页面透出底下的旧页，
+    // 形成重影。push/pop 都靠位移表达层级，不需要透明度帮忙。
+    property real transitionStartOpacity: 1.0
     readonly property int count: _entries.length
     readonly property bool canPop: count > 0 && !transitionRunning
     readonly property bool isShowing: currentItem !== null
@@ -91,20 +104,42 @@ Item {
 
     ParallelAnimation {
         id: popAnimation
+        // 入栈时只有进入页在动（+distance -> 0），被它盖住的页面原地不动。
+        // 出栈必须是它的镜像：只有被弹出的页在动（0 -> +distance），
+        // 回来的页面原地不动。
+        //
+        // 别再写成"父页 -distance -> 0 + 子页 0 -> +distance"两页同动：
+        // 两条曲线相同，两页的相对位移就恒等于 0，屏幕上看到的不是
+        // "子页滑走、父页露出来"，而是整块画面平移 —— 没有层次。
+        //
+        // 曲线必须是加速曲线（In 系），不是减速曲线（Out 系）：出栈是"把页面
+        // 甩出去"，速度该在末端最大；照抄入栈的减速曲线会让页面在快离开屏幕
+        // 时几乎停住（最后 20ms 只走 0.2px），观感上等于没有缓动。
+        //
+        // 选 InQuad 而不是严格时间反演 InCubic，因为平均速度是恒定的
+        // （distance / duration），末端越比值越大、起步就越接近 0：
+        //   曲线         起步(每20ms)  末端(px/ms)  末端/平均
+        //   InCubic 240     0.19px       3.68        2.76
+        //   InQuad  240     2.22px       2.56        1.92
+        //   InQuad  180     3.95px       3.36        1.89   <-- 现在用的
+        //   OutCubic 240   73.5px        0.01        0.01
+        // InCubic 末端只比 InQuad 快 10%，起步却慢 20 倍；把时长压到 180ms
+        // 之后，InQuad 的末端速度已经追平 InCubic@240，起步仍有近 4px/20ms。
+        // 时长用 popDuration（比入栈的 240ms 短）：退出本来就不该让人等。
         NumberAnimation {
-            target: root._incoming
+            target: root._outgoing
             property: "transitionX"
-            from: -root.transitionDistance
-            to: 0
-            duration: root.transitionDuration
-            easing.type: Easing.OutCubic
+            from: 0
+            to: root.transitionDistance
+            duration: root.popDuration
+            easing.type: Easing.InQuad
         }
         NumberAnimation {
             target: root._incoming
             property: "opacity"
             from: root.transitionStartOpacity
             to: 1
-            duration: root.transitionDuration
+            duration: root.popDuration
             easing.type: Easing.OutQuad
         }
         onStopped: root._animationStopped()
@@ -374,14 +409,20 @@ Item {
             _showItem(incoming, true);
             _publishPageIndex(incoming);
         } else {
-            entry.item.visible = false;
-            entry.host.visible = false;
-            qmlGlobal.currentPageIndex = YEnum.PageIndex.NonePage;
+            // 返回首页这条路不再在这里隐藏被弹出的页面：它还要播完退出动画，
+            // 隐藏交给 _animationStopped() -> _disposeEntry()。
+            // currentPageIndex 同理往后挪——页面在屏幕上还活着的时候，
+            // 全局页码先跳成 NonePage 会让监听方看到自相矛盾的状态。
             if (_incoming)
                 _incoming.visible = true;
         }
+        // _showItem() 刚把进入页的 z 抬到最大，出栈时被弹出的页面
+        // 必须盖在它上面，否则右移退出的动作会被父页整体遮住。
+        entry.host.z = YUtils.nextVisualZ();
         if (_incoming) {
-            _incoming.transitionX = animated ? -transitionDistance : 0;
+            // 父页原地不动 —— 入栈时它也是不动的，出栈才对得上。
+            // 父页占满 0..width，子页滑出去露出的就是它，不会有缝。
+            _incoming.transitionX = 0;
             _incoming.opacity = animated ? transitionStartOpacity : 1;
         }
 
@@ -431,6 +472,12 @@ Item {
                     _disposeEntry(popped, _cachePolicy(popped.route, popped.requestedCache));
                 }
             }
+            // 返回首页那条分支：全局页码要等退出动画播完、页面真正隐藏之后才置空。
+            // 原先在 _startPop() 里就置空，于是有 180ms 的窗口「全局已无当前页、
+            // 子页却还在屏幕上」——监听 currentPageIndexChanged 的 C++ 侧会拿到
+            // 与画面不一致的状态。entries 空了就说明确实没有页面了。
+            if (_entries.length === 0 && qmlGlobal.currentPageIndex !== YEnum.PageIndex.NonePage)
+                qmlGlobal.currentPageIndex = YEnum.PageIndex.NonePage;
             if (incoming) {
                 incoming.transitionX = 0;
                 incoming.opacity = 1;

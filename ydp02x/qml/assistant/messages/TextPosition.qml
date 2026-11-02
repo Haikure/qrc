@@ -5,11 +5,14 @@ import QtQuick 2.15
 TextEdit {
     id: root
     visible: false
+    enabled: false
+    property string sourceText: ""
     readOnly: true
     textFormat: TextEdit.PlainText
     wrapMode: TextEdit.WrapAnywhere
     font.pixelSize: 14
     function point(y, displayedHeight) {
+        if (text !== sourceText) text = sourceText;
         var scale = displayedHeight > 0 && contentHeight > 0 ? displayedHeight / contentHeight : 1;
         var position = positionAt(0, Math.max(0, y / scale));
         return {block: -1, offset: y, source: position,
@@ -17,6 +20,7 @@ TextEdit {
     }
     function offset(point, displayedHeight) {
         if (point.source === undefined) return point.offset;
+        if (text !== sourceText) text = sourceText;
         var scale = displayedHeight > 0 && contentHeight > 0 ? displayedHeight / contentHeight : 1;
         return positionToRectangle(Math.min(text.length, point.source)).y * scale + (point.lineOffset || 0);
     }

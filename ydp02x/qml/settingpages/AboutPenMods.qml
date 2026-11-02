@@ -15,12 +15,12 @@ YSettingItemPage {
         anchors.fill: parent
         anchors.leftMargin: 54
         anchors.rightMargin: 10
+        clip: true
         contentHeight: id_title_container.height + id_column.height
 
         YSettingItemTitle {
             id: id_title_container
-
-            title: "关于 PenMods"
+            title: qsTr("关于 PenMods")
         }
 
         Column {
@@ -32,55 +32,103 @@ YSettingItemPage {
             spacing: 8
 
             YSettingAboutItem {
-                title: "版本"
+                implicitHeight: 36
+                color: "transparent"
+                titlePixelSize: 16
+                titleColor: YColors.grayText
+                title: qsTr("版本")
                 value: mod.version
             }
 
-            DescribedClickableTextBox {
-                opacityChangableWhenPressed: false
-                describeItem.width: 200
-                title: "构建信息"
-                describe: mod.buildInfo
+            YSettingItemTitle {
+                title: qsTr("项目与支持")
             }
 
             YSettingAboutItem {
-                title: "已缓存符号计数"
-                value: mod.cachedSymCount
-            }
-
-            YSettingAboutItem {
+                implicitHeight: 36
+                color: "transparent"
+                titlePixelSize: 16
+                titleColor: YColors.grayText
                 title: "GitHub"
                 value: "PenUniverse"
             }
 
-            DescribedClickableTextBox {
-                opacityChangableWhenPressed: false
-                describeItem.width: 200
-                title: "Telegram 社群"
-                describe: "https://t.me/PenUniverse"
-            }
+            Column {
+                width: parent.width - 20
+                anchors.horizontalCenter: parent.horizontalCenter
+                spacing: 4
 
-            DescribedClickableTextBox {
-                opacityChangableWhenPressed: false
-                describeItem.width: 200
-                title: "特别鸣谢"
-                describe: "Dobby (Hook Framework)\nQt Project\nNetease Youdao\nRedbeanW (Developer)\nAll Sponsors..."
+                YText {
+                    text: qsTr("Telegram 社群")
+                    font.pixelSize: 16
+                    color: YColors.grayText
+                }
+
+                YText {
+                    width: parent.width
+                    text: "https://t.me/PenUniverse"
+                    font.pixelSize: 14
+                    wrapMode: Text.Wrap
+                }
             }
 
             YSettingAboutClickableItem {
-                title: "捐助项目发展"
+                title: qsTr("捐助项目发展")
                 imageName: "settings/info_more_arrow"
                 onClicked: {
                     openSettingPage("AFDianQrCode");
                 }
             }
 
+            YSettingItemTitle {
+                title: qsTr("特别鸣谢")
+            }
+
+            YText {
+                width: parent.width - 20
+                anchors.horizontalCenter: parent.horizontalCenter
+                font.pixelSize: 14
+                color: YColors.grayText
+                wrapMode: Text.Wrap
+                text: "Dobby (Hook Framework)\nQt Project\nNetease Youdao\nRedbeanW (Developer)\nAll Sponsors..."
+            }
+
+            YSettingItemTitle {
+                title: qsTr("技术信息")
+            }
+
+            Column {
+                width: parent.width - 20
+                anchors.horizontalCenter: parent.horizontalCenter
+                spacing: 4
+
+                YText {
+                    text: qsTr("构建信息")
+                    font.pixelSize: 16
+                    color: YColors.grayText
+                }
+
+                YText {
+                    width: parent.width
+                    text: mod.buildInfo
+                    font.pixelSize: 14
+                    color: YColors.grayText
+                    wrapMode: Text.WrapAnywhere
+                }
+            }
+
+            YSettingAboutItem {
+                implicitHeight: 36
+                color: "transparent"
+                titlePixelSize: 16
+                titleColor: YColors.grayText
+                title: qsTr("已缓存符号计数")
+                value: mod.cachedSymCount
+            }
+
             YSpacingForColumn {
                 implicitHeight: 4
             }
-
         }
-
     }
-
 }

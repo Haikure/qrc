@@ -39,6 +39,7 @@ YPage {
                     id_slider_moving_timer.restart()
                     if (spkSettingVolume != value) {
                         settingManager.setSpkVolume(value)
+                        Qt.callLater(function() { value = settingManager.spkVolume })
                     }
                 }
                 onSpkSettingVolumeChanged: {

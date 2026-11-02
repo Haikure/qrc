@@ -1,6 +1,7 @@
 import QtQuick 2.12
 import QtQml.Models 2.12
 import com.youdao.pen 1.0
+import com.github.penuniverse 1.0
 
 import "../commons"
 import "../i18n"
@@ -11,8 +12,29 @@ Item {
     anchors.leftMargin: 54
     anchors.rightMargin: 10
     readonly property bool isPlaying: YEnum.PLAYING === mediaPlayerManager.playState
+    readonly property int bottomInset: 12
+    readonly property bool customLyrics: musicPlayer.hasTimeline
+    readonly property bool lyricsAvailable: customLyrics || mediaPlayerManager.hasLrc
+    LyricClock {
+        id: lyricClock
+        sourcePosition: Math.max(0, mediaPlayerManager.currentPos)
+        playbackRate: mediaPlayerManager.playbackRate
+        playing: id_content_container.isPlaying
+        running: isShowing && customLyrics && !noLrcTip && id_content_container.visible && playing
+    }
+    Connections {
+        target: musicPlayer
+        function onLyricsChanged() {
+            lyricClock.reset()
+            id_lrc_main_show.resumeFollowing()
+        }
+    }
+    readonly property int activeLine: customLyrics ? musicPlayer.lyricIndex(lyricClock.position) : mediaPlayerManager.currentSentenceId
+    function escapeText(value) {
+        return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    }
     readonly property bool noLrcTip: isShowing && ((lrcStateList && lrcStateIndex < lrcStateList.length && YEnum.LS_HIDE === lrcStateList[lrcStateIndex])
-    || !mediaPlayerManager.hasLrc)
+    || !lyricsAvailable)
 
     function show() {
         id_delay_show_lrc_timer.restart()
@@ -34,74 +56,62 @@ Item {
         }
     }
 
-    YBaseListView {
+    YAudioPlayerLyricView {
         id: id_lrc_main_show
         anchors.fill: parent
-        spacing: 16
-        currentIndex: mediaPlayerManager.currentSentenceId >= 0 ? mediaPlayerManager.currentSentenceId : 0
+        anchors.bottomMargin: bottomInset
+        lyricsVisible: !noLrcTip
+        backgroundColor: YColors.black
+        title: mediaPlayerManager.title
+        fontFamily: qmlGlobal.fontFamilyZhCn
+        titleColor: YColors.grayText
+        activeIndex: activeLine
         model: id_lrc_filter_model
-
-        header: id_header_component
-        footer: id_footer_component
-
-        preferredHighlightBegin: height / 2 - 20
-        preferredHighlightEnd: height / 2 + 20
-        highlightRangeMode: ListView.ApplyRange
-        highlightMoveDuration: 500
-    }
-
-    Component {
-        id: id_header_component
-        YBackground {
-            id: id_title_area
-            width: id_lrc_main_show.width
-            implicitHeight: 50
-
-            YText {
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                font.pixelSize: 16
-                color: YColors.grayText
-                elide: YText.ElideRight
-                font.family: qmlGlobal.fontFamilyZhCn
-                text: mediaPlayerManager.title
-            }
-        }
-    }
-
-    Component {
-        id: id_footer_component
-        Item {
-            width: id_lrc_main_show.width
-            implicitHeight: 50
-            YBackground {
-                anchors.fill: parent
-            }
-        }
+        onTapped: id_player_state_mask_show.show()
     }
 
     DelegateModel {
         id: id_lrc_filter_model
-        model: mediaPlayerManager
+        model: customLyrics ? musicPlayer.lyricRows : mediaPlayerManager
 
         delegate: Item {
             id: id_delegate_item
             width: id_lrc_main_show.width
             height: id_sentence_column.implicitHeight
             // 提取数据，减少深层属性访问
-            readonly property var modelData: model.modelData
-            readonly property string mainLrc: modelData.mainLrc
-            readonly property string transLrc: modelData.transLrc
-            readonly property bool isCurrentLrc: modelData.id === mediaPlayerManager.currentSentenceId
-            readonly property bool hasKeyPoint: modelData.hasKeyPoint
+            readonly property var modelData: model.modelData || ({})
+            readonly property string mainLrc: modelData.mainLrc || ""
+            readonly property string transLrc: modelData.transLrc || ""
+            readonly property bool isCurrentLrc: customLyrics ? index === activeLine : modelData.id !== undefined && modelData.id === activeLine
+            readonly property bool hasKeyPoint: !customLyrics && !!modelData.hasKeyPoint
 
+            readonly property real readingOffset: customLyrics ? nativeLine.focusY : 0
+            onReadingOffsetChanged: {
+                if (isCurrentLrc) id_lrc_main_show.followCurrent()
+            }
             readonly property string currentFontFamily: qmlGlobal.fontFamilyZhCn
 
             Column {
                 id: id_sentence_column
-                spacing: 4
+                spacing: 3
                 width: parent.width
+
+                LyricLineItem {
+                    id: nativeLine
+                    width: parent.width
+                    height: visible ? implicitHeight : 0
+                    line: customLyrics ? id_delegate_item.modelData : ({})
+                    font.family: currentFontFamily
+                    font.pixelSize: 21
+                    pendingColor: index < activeLine ? YColors.blueText : (isCurrentLrc ? "#8c939f" : YColors.white)
+                    playedColor: YColors.blueText
+                    active: isCurrentLrc
+                    position: active ? lyricClock.position : -1
+                    opacity: isCurrentLrc ? 1 : 0.42
+                    Behavior on opacity { NumberAnimation { duration: 180 } }
+                    visible: customLyrics && isShowing && lyricsAvailable &&
+                        (YEnum.LS_BILINGUAL === lrcStateList[lrcStateIndex] || YEnum.LS_ORIGINAL === lrcStateList[lrcStateIndex])
+                }
 
                 YText {
                     id: id_sentence_main_lrc
@@ -111,25 +121,32 @@ Item {
                     wrapMode: TextEdit.Wrap
                     font.pixelSize: 20
                     textFormat: YText.RichText
-                    opacity: isCurrentLrc ? 1.0 : 0.16
+                    opacity: isCurrentLrc ? 1.0 : 0.42
+                    Behavior on opacity { NumberAnimation { duration: 180 } }
+                    font.family: currentFontFamily
 
-                    visible: isShowing && !id_delay_show_lrc_timer.running && mediaPlayerManager.hasLrc &&
+                    visible: !customLyrics && isShowing && !id_delay_show_lrc_timer.running && lyricsAvailable &&
                     ((YEnum.LS_BILINGUAL === lrcStateList[lrcStateIndex]) || (YEnum.LS_ORIGINAL === lrcStateList[lrcStateIndex]))
 
                     text: {
                         if (!visible) return ""
+                        if (customLyrics) {
+                            if (isCurrentLrc)
+                                return musicPlayer.lyricText(index, mediaPlayerManager.currentPos, YColors.blueText, YColors.white)
+                            return escapeText(mainLrc)
+                        }
 
                             if (isCurrentLrc) {
                                 let endIndex = mediaPlayerManager.sentencePlayingEnd > 0 ? mediaPlayerManager.sentencePlayingEnd :
                                 (hasKeyPoint ? 0 : mainLrc.length)
 
-                                let played = mainLrc.substring(0, endIndex)
-                                let unplayed = endIndex < mainLrc.length ? mainLrc.substring(endIndex) : ""
+                                let played = escapeText(mainLrc.substring(0, endIndex))
+                                let unplayed = endIndex < mainLrc.length ? escapeText(mainLrc.substring(endIndex)) : ""
 
                                 return `<span style="font-family: ${currentFontFamily}; color:${YColors.blueText}">${played}</span>` +
                                 (unplayed ? `<span style="font-family: ${currentFontFamily}; color:${YColors.white}">${unplayed}</span>` : "")
                             } else {
-                                return `<span style="font-family: ${currentFontFamily}">${mainLrc}</span>`
+                                return escapeText(mainLrc)
                             }
                     }
                 }
@@ -138,23 +155,20 @@ Item {
                     id: id_sentence_trans_lrc
                     width: parent.width
                     lineHeightMode: Text.FixedHeight
-                    lineHeight: 26
-                    wrapMode: TextEdit.Wrap
-                    anchors.topMargin: 6
-                    textFormat: YText.RichText
-                    opacity: isCurrentLrc ? 1.0 : 0.16
-                    visible: isShowing && !id_delay_show_lrc_timer.running && mediaPlayerManager.hasLrc &&
+                    lineHeight: 20
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 15
+                    font.family: currentFontFamily
+                    textFormat: Text.PlainText
+                    color: (isCurrentLrc || (customLyrics && index < activeLine))
+                        ? (lrcStateList[lrcStateIndex] === YEnum.LS_TRANS ? YColors.blueText : YColors.grayText)
+                        : YColors.white
+                    opacity: isCurrentLrc ? 1.0 : 0.42
+                    Behavior on opacity { NumberAnimation { duration: 180 } }
+                    visible: isShowing && (customLyrics || !id_delay_show_lrc_timer.running) && lyricsAvailable &&
                     ((YEnum.LS_BILINGUAL === lrcStateList[lrcStateIndex]) || (YEnum.LS_TRANS === lrcStateList[lrcStateIndex])) &&
                     transLrc.length > 0
-                    text: {
-                        if (!visible) return ""
-                            let txtColor = isCurrentLrc ? (id_sentence_main_lrc.visible ? YColors.grayText : YColors.blueText) : ""
-                            if (isCurrentLrc) {
-                                return `<span style="font-family: ${currentFontFamily}; color:${txtColor}">${transLrc}</span>`
-                            } else {
-                                return `<span style="font-family: ${currentFontFamily}">${transLrc}</span>`
-                            }
-                    }
+                    text: visible ? transLrc : ""
                 }
             }
         }
@@ -173,14 +187,10 @@ Item {
         }
     }
 
-    YAudioPlayerLrcMouseArea {
-        objectName: "YAudioPlayer.qml_YText_hasLrc_YMouseArea"
-    }
-
     Item {
         id: id_content_column
-        anchors {fill: parent; topMargin: 50}
-
+        anchors { left: parent.left; right: parent.right; top: parent.top; topMargin: id_lrc_main_show.contentTop; bottom: parent.bottom; bottomMargin: bottomInset }
+        clip: true
         YTimer {
             id: id_delay_show_tip_timer
             interval: 500
@@ -193,7 +203,7 @@ Item {
 
         YSpacingForColumn {
             id: id_delay_show_tip
-            implicitHeight: 254 - 50
+            anchors.fill: parent
             visible: false
 
             YMouseArea {
@@ -207,9 +217,7 @@ Item {
 
             Item {
                 id: id_no_lrc_show_container
-                anchors.top: parent.top
-                anchors.topMargin: 30
-                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.centerIn: parent
 
                 width: id_label.width
                 implicitHeight: 24
@@ -225,7 +233,7 @@ Item {
                         if (lrcStateList && lrcStateIndex < lrcStateList.length && YEnum.LS_HIDE === lrcStateList[lrcStateIndex]) {
                             return YTranslateText.subtitleHidden
                         }
-                        if (!mediaPlayerManager.hasLrc) {
+                        if (!lyricsAvailable) {
                             return YTranslateText.noSubtitles
                         }
                         return ""
@@ -241,14 +249,15 @@ Item {
 
     Item {
         id: id_player_state_mask_container
-        anchors.fill: parent
+        anchors { left: parent.left; right: parent.right; top: parent.top; topMargin: id_lrc_main_show.contentTop; bottom: parent.bottom; bottomMargin: bottomInset }
+        clip: true
         visible: false
 
         Rectangle {
             id: id_player_state_mask
             anchors.fill: parent
             enabled: false
-            color: "#000000"
+            color: YColors.black
             radius: 0
 
             QtObject {
@@ -351,6 +360,25 @@ Item {
                 }
             }
         }
+    }
+
+    function openOnlineLyrics() {
+        if (musicPlayer.canFetchLyrics()) onlineLyrics.open()
+    }
+
+    z: onlineLyrics.visible ? 10 : 0
+    YOnlineLyricsPanel {
+        id: onlineLyrics
+        anchors.leftMargin: -54
+        anchors.rightMargin: -10
+    }
+    readonly property bool playerShowing: isShowing
+    onPlayerShowingChanged: {
+        if (!playerShowing) onlineLyrics.close()
+    }
+    Connections {
+        target: mediaPlayerManager
+        function onTitleChanged() { onlineLyrics.close() }
     }
 
     onIsPlayingChanged: {

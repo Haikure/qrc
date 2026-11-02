@@ -48,6 +48,8 @@ Item {
 
     signal backButtonClicked()
     signal captureConfirmed(string base64Data)
+    // 多帧不拼接、逐张作为独立附件加入草稿（#21-3：多个附件不能拼成一张图）。
+    signal captureConfirmedMulti(var images)
     signal captureCancelled()
 
     // -------------------- 生命周期 --------------------
@@ -236,6 +238,21 @@ Item {
         var result = currentComposite;
         root.cleanup();
         root.captureConfirmed(result);
+        root.backButtonClicked();
+    }
+
+    // 逐张保存：把当前拍到的 N 帧分别作为独立图片附件（不拼接）。
+    function onFinishEach() {
+        if (processing) return;
+        if (capturedImages.length === 0) {
+            root.cleanup();
+            root.captureCancelled();
+            root.backButtonClicked();
+            return;
+        }
+        var results = capturedImages.slice();
+        root.cleanup();
+        root.captureConfirmedMulti(results);
         root.backButtonClicked();
     }
 
@@ -682,6 +699,12 @@ Item {
                 onClicked: onDirectionSelected("vertical")
             }
             YButton {
+                width: 64; height: 22; pixelSize: 10; color: "#2E4A6B"
+                border.width: 1; border.color: "#4A90D9"
+                text: "逐张保存"; textColor: "white"
+                onClicked: onFinishEach()
+            }
+            YButton {
                 width: 44; height: 22; pixelSize: 10; color: "#2E1A1A"
                 border.width: 1; border.color: "#4A2A2A"
                 text: "清空"; textColor: "#FF453A"
@@ -712,6 +735,22 @@ Item {
             }
 
             YButton {
+                // 多帧且不想拼接：逐张作为独立附件加入草稿（#21-3）。
+                visible: capturedImages.length > 1
+                width: visible ? 56 : 0
+                height: 22; pixelSize: 10; color: "#2E4A6B"
+                border.width: 1; border.color: "#4A90D9"
+                text: "逐张保存"; textColor: "white"
+                anchors {
+                    right: finishButton.left
+                    rightMargin: 4
+                    verticalCenter: parent.verticalCenter
+                }
+                onClicked: onFinishEach()
+            }
+
+            YButton {
+                id: finishButton
                 anchors { right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
                 width: 54; height: 22; pixelSize: 10; color: "#4CAF50"
                 border.width: 0
@@ -734,6 +773,22 @@ Item {
             }
 
             YButton {
+                // 等待下一次扫描时也可以把已拍帧逐张保存（不拼接）。
+                visible: capturedImages.length > 1
+                width: visible ? 56 : 0
+                height: 22; pixelSize: 10; color: "#2E4A6B"
+                border.width: 1; border.color: "#4A90D9"
+                text: "逐张保存"; textColor: "white"
+                anchors {
+                    right: phaseDFinish.left
+                    rightMargin: 4
+                    verticalCenter: parent.verticalCenter
+                }
+                onClicked: onFinishEach()
+            }
+
+            YButton {
+                id: phaseDFinish
                 anchors { right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
                 width: 54; height: 22; pixelSize: 10; color: "#4CAF50"
                 border.width: 0

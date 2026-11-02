@@ -18,6 +18,10 @@ Item {
 
     // 优化：移除属性绑定中的副作用（上报埋点），改为纯数据返回
     readonly property var lrcStateList: {
+        if (musicPlayer.hasTimeline)
+            return musicPlayer.hasLyricTranslation
+                ? [YEnum.LS_BILINGUAL, YEnum.LS_ORIGINAL, YEnum.LS_TRANS, YEnum.LS_HIDE]
+                : [YEnum.LS_ORIGINAL, YEnum.LS_HIDE]
         switch (mediaPlayerManager.lrcState) {
             case YEnum.LS_BILINGUAL:
                 return [YEnum.LS_BILINGUAL, YEnum.LS_ORIGINAL, YEnum.LS_TRANS, YEnum.LS_HIDE]
@@ -32,6 +36,7 @@ Item {
     }
 
     property int lrcStateIndex: 0
+    onLrcStateListChanged: lrcStateIndex = 0
 
     // --- Signal Handlers & Logic ---
 
@@ -227,6 +232,7 @@ Item {
         YAudioPlayerPlayBar {
             id: id_play_bar
             z: 2
+            onOnlineLyricsRequested: id_content_container.openOnlineLyrics()
         }
 
         YProgressBar {
@@ -287,7 +293,7 @@ Item {
             anchors.right: parent.right
             anchors.rightMargin: id_play_bar.state === "show" ? 170 : 0
             anchors.bottom: parent.bottom
-            height: 26
+            height: 12
             z: 1
             preventStealing: true
             enabled: mediaPlayerManager.duration > 0

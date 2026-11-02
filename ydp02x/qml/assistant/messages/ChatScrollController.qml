@@ -29,6 +29,7 @@ Item {
     function gestureStarted() {
         ++epoch;
         settle.stop();
+        followMotion.stop();
         targetId = "";
         anchor = null;
         mode = "reading";
@@ -59,6 +60,7 @@ Item {
     function locate(index) {
         if (index < 0 || index >= model.count) return;
         ++epoch;
+        followMotion.stop();
         mode = "locating";
         targetId = model.get(index).messageId;
         anchor = {id: targetId, point: {block: -1, offset: 0, row: true}};
@@ -71,7 +73,16 @@ Item {
         view.forceLayout();
         var restored = false;
         if (mode === "following") {
-            view.positionViewAtEnd();
+            var bottom = Math.max(view.originY, view.originY + view.contentHeight - view.height);
+            if (Math.abs(view.contentY - bottom) < 0.5) {
+                followMotion.stop();
+                view.contentY = bottom;
+            } else if (!followMotion.running || Math.abs(followMotion.to - bottom) > 0.5) {
+                followMotion.stop();
+                followMotion.from = view.contentY;
+                followMotion.to = bottom;
+                followMotion.start();
+            }
             restored = true;
         } else if (anchor) {
             var index = indexForId(anchor.id);
@@ -93,6 +104,16 @@ Item {
         applying = false;
         return restored;
     }
+    NumberAnimation {
+        id: followMotion
+        target: root.view
+        property: "contentY"
+        duration: 110
+        easing.type: Easing.OutCubic
+    }
+    onModeChanged: { if (mode !== "following") followMotion.stop(); }
+    Component.onDestruction: followMotion.stop()
+
     Timer {
         id: settle
         interval: 16
@@ -101,7 +122,9 @@ Item {
             root.apply();
             // Later layout notifications restart this same controller. A gesture
             // cancels it immediately; no old task can reposition the list later.
-            if (++root.ticks >= 4) {
+            // Follow/reading layouts already notify schedule() when geometry
+            // changes. Only a locate needs retries to instantiate a distant row.
+            if (++root.ticks >= (root.mode === "locating" ? 4 : 1)) {
                 stop();
                 if (root.mode === "locating") {
                     root.mode = "reading";

@@ -24,6 +24,7 @@ YSettingItemPage {
         anchors.fill: parent
         anchors.leftMargin: 54
         anchors.rightMargin: 10
+        clip: true
         contentHeight: id_title_container.height + id_column.height
 
         YSettingItemTitle {
@@ -74,14 +75,38 @@ YSettingItemPage {
             anchors.right: parent.right
             spacing: 8
 
+            // Read-only device details use compact rows rather than navigation cards.
             YSettingAboutItem {
+                implicitHeight: 36
+                color: "transparent"
+                titlePixelSize: 16
+                titleColor: YColors.grayText
                 title: YTranslateText.model
-                value: settingManager.sysDevName //+ " " +settingManager.sysRegionInfo;
+                value: settingManager.sysDevName
             }
 
             YSettingAboutItem {
+                implicitHeight: 36
+                color: "transparent"
+                titlePixelSize: 16
+                titleColor: YColors.grayText
                 title: YTranslateText.version
                 value: settingManager.sysVersion
+            }
+
+            YSettingAboutItem {
+                implicitHeight: 36
+                color: "transparent"
+                titlePixelSize: 16
+                titleColor: YColors.grayText
+                title: YTranslateText.sysSn
+                titleItem.anchors.right: undefined
+                titleItem.anchors.rightMargin: undefined
+                value: settingManager.sysSn
+            }
+
+            YSettingItemTitle {
+                title: qsTr("功能与服务")
             }
 
             YSettingAboutClickableItem {
@@ -104,53 +129,34 @@ YSettingItemPage {
                 }
             }
 
-            YSettingAboutItem {
-                title: YTranslateText.sysSn
-                titleItem.anchors.right: undefined
-                titleItem.anchors.rightMargin: undefined
-                value: settingManager.sysSn
-            }
-
-            // YSettingAboutItem {
-            //     title: YTranslateText.macAddress
-            //     titleItem.anchors.right: undefined
-            //     titleItem.anchors.rightMargin: undefined
-            //     value: settingManager.sysMac
-            // }
-
-            YSettingAboutClickableItem {
-                visible: !antiEmbs.active
-                title: "开发者选项"
-                value: ""
-                imageName: "settings/info_more_arrow"
-                onClicked: {
-                    showPage("DeveloperSettingPage",true,'dev_setting')
-                }
-            }
-
-            /*YSettingAboutItem {
-                visible: !qmlGlobal.checkFeature(YEnum.FEATURE_SKU_KO)
-                         && !qmlGlobal.checkFeature(YEnum.FEATURE_SKU_EN)
-                title: YTranslateText.serviceHotline
-                value: qmlGlobal.checkFeature(YEnum.FEATURE_SKU_TW)
-                       ? "0800-000150" : "400-800-4163"
-            }*/
-
             YSettingAboutClickableItem {
                 title: YTranslateText.certification
-                value: ""
                 imageName: "settings/info_more_arrow"
                 onClicked: {
                     showPage("YSettingCertification")
                 }
             }
 
+            YSettingItemTitle {
+                title: qsTr("高级操作")
+            }
+
             YSettingAboutClickableItem {
-                title: YTranslateText.resetChoice
-                value: ""
+                visible: !antiEmbs.active
+                title: qsTr("开发者选项")
                 imageName: "settings/info_more_arrow"
                 onClicked: {
-                    showPage("YSettingReset",true,"reset_page")
+                    showPage("DeveloperSettingPage", true, "dev_setting")
+                }
+            }
+
+            YSettingAboutClickableItem {
+                title: YTranslateText.resetChoice
+                color: YColors.amber.tint
+                titleColor: YColors.amber.text
+                imageName: "settings/info_more_arrow"
+                onClicked: {
+                    showPage("YSettingReset", true, "reset_page")
                 }
             }
 

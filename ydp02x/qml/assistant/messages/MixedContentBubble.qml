@@ -100,7 +100,7 @@ Item {
     TextPosition {
         id: sourcePosition
         width: root.maxWidth
-        text: root.rawText
+        sourceText: root.rawText
         font.family: root.fontFamily || ""
     }
 
@@ -399,12 +399,14 @@ Item {
     }
 
     // ── 阶段 1：流式加载中，纯文本 ──
-    Text {
+    StreamingText {
         id: streamingText
+        visible: !root.isComplete
         opacity: root.isComplete ? 0 : 1
         width: root.maxWidth
-        text: root.rawText
-        textFormat: Text.PlainText
+        rawText: root.rawText
+        streaming: !root.isComplete
+        animateAppend: !root.layoutBusy && !root.scrolledUp
         wrapMode: Text.WrapAnywhere
         color: "#FFFFFF"
         font.pixelSize: 14
@@ -422,7 +424,8 @@ Item {
 
         Text {
             anchors.fill: parent
-            text: root.rawText
+            visible: root.isComplete && root._showSkeleton
+            text: root.isComplete && root._showSkeleton ? root.rawText : ""
             textFormat: Text.PlainText
             wrapMode: Text.WrapAnywhere
             color: "#D7E3EE"
@@ -472,7 +475,7 @@ Item {
                     reportedGeneration = renderGeneration;
                     root._blockLoaded(renderGeneration);
                 }
-                asynchronous: false
+                asynchronous: true
                 sourceComponent: {
                     switch (blockData.type) {
                     case "math_block": return blockMathComponent;

@@ -6,7 +6,7 @@ Item {
 
     property string messageId: ""
     property string sessionId: ""
-    readonly property string layoutSignature: MessageState.version(rawText + reasoningText + attachmentsJson)
+    readonly property string layoutSignature: MessageState.version(rawText + reasoningText + attachmentsJson + toolEntriesJson)
         + ":" + listWidth + ":" + (fontFamily || "") + ":" + renderMode + ":" + isComplete
     property var savedState: MessageState.entry(sessionId, messageId)
     property real committedHeight: savedState.height || 44
@@ -20,6 +20,7 @@ Item {
     property bool isReasoning: false
     property bool isToolCall: false
     property string toolState: ""
+    property string toolEntriesJson: "[]"
     property string attachmentsJson: "[]"
     readonly property var attachments: {
         try {
@@ -69,7 +70,7 @@ Item {
         }
         return point.offset;
     }
-    function scheduleHeight() { heightCommit.restart(); }
+    function scheduleHeight() { if (!heightCommit.running) heightCommit.start(); }
     onLayoutSignatureChanged: scheduleHeight()
     onRenderModeChanged: {
         if (!listMoving) committedRenderMode = renderMode;
@@ -137,7 +138,11 @@ Item {
             property bool userToggled: root.savedState.expanded !== null
             property bool userExpanded: root.savedState.expanded === true
             readonly property bool expanded: userToggled ? userExpanded : !root.isComplete
-            readonly property bool bodyVisible: expanded
+            property real expansion: expanded ? 1 : 0
+            Behavior on expansion {
+                enabled: reasoningItem.userToggled && !root.listMoving
+                NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+            }
             // 展开后的最大高度。
             readonly property real maxBodyHeight: 104
             implicitWidth: root.width
@@ -147,9 +152,8 @@ Item {
             Rectangle {
                 id: reasoningPanel
                 width: Math.min(root.listWidth - 16, 400)
-                height: 34 + (reasoningItem.bodyVisible
-                              ? Math.min(reasoningItem.maxBodyHeight, reasoningText.implicitHeight + 16)
-                              : 0)
+                height: 34 + Math.min(reasoningItem.maxBodyHeight, reasoningText.implicitHeight + 16)
+                             * reasoningItem.expansion
                 x: 8
                 radius: 6
                 color: "#17222D"
@@ -237,7 +241,10 @@ Item {
                         anchors.fill: parent
                         // 有内容时也允许展开。
                         enabled: root.isComplete || root.rawText.length > 0
-                        preventStealing: false
+                        // 防止点击被 ListView 抢走：这条 34px 头部横带里宁可拖不动列表，
+                        // 也不能让「点的时候手指抖一下」变成 canceled（AGENTS.md 有实测数据，
+                        // 条件式 preventStealing 等同于 false，没救）。
+                        preventStealing: true
                         onClicked: {
                             root.toolCardExpansionStarted(!reasoningItem.expanded);
                             reasoningItem.userExpanded = !reasoningItem.expanded;
@@ -248,7 +255,7 @@ Item {
                 }
 
                 Rectangle {
-                    visible: reasoningItem.bodyVisible
+                    visible: reasoningItem.expansion > 0
                     anchors { left: parent.left; right: parent.right; top: reasoningHeader.bottom; bottom: parent.bottom }
                     anchors.leftMargin: 3
                     color: "#111A23"
@@ -304,6 +311,7 @@ Item {
                 text: root.text
                 rawText: root.rawText
                 toolState: root.toolState
+                entriesJson: root.toolEntriesJson
                 expanded: root.savedState.expanded === true
                 onExpandedChanged: root.savedState.expanded = expanded
                 maxWidth: Math.min(root.listWidth - 16, 300)
@@ -344,6 +352,7 @@ Item {
                     rawText: root.rawText
                     isComplete: root.isComplete
                     richText: root.committedRenderMode === "basic"
+                    animateStreaming: !root.listMoving && !root.listScrolledUp && !root.navigationJumping
                     maxWidth: Math.min(root.listWidth - 16, 400)
                     fontFamily: root.fontFamily
                     Component.onCompleted: root.contentBubble = simpleBubble
@@ -396,6 +405,11 @@ Item {
                 id: aiBubble
                 width: Math.min(root.listWidth - 16, 400)
                 height: mixedBubble.implicitHeight + 18
+                Behavior on height {
+                    enabled: !root.isComplete && !root.listMoving && !root.listScrolledUp
+                             && !root.navigationJumping && root.richContentNearViewport
+                    NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
+                }
                 radius: 16
                 color: "#182533"
                 clip: true

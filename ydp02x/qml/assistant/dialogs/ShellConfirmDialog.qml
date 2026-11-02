@@ -1,4 +1,5 @@
 import QtQuick 2.12
+import "../../commons"
 
 Item {
     id: root
@@ -10,19 +11,41 @@ Item {
     property string command: ""
     property var fontFamily
     property bool active: false
-
     property var queue: []
+    property var audit: ({})
 
     signal approved(string toolCallId)
     signal denied(string toolCallId)
 
+    onActiveChanged: {
+        if (active) confirmDialog.show();
+        else confirmDialog.close();
+    }
+
+    function warningsText() {
+        return audit && audit.warnings ? audit.warnings.join("\n") : "";
+    }
+
+    function refreshAudit(cmd) {
+        audit = ({});
+        if (typeof chatbot === "undefined" || !chatbot || typeof chatbot.auditShellCommand !== "function")
+            return;
+        try {
+            audit = JSON.parse(chatbot.auditShellCommand(cmd));
+        } catch (e) {
+            audit = ({});
+        }
+    }
+
     function show(tcId, cmd) {
         if (active) {
-            queue.push({"toolCallId": tcId, "command": cmd});
+            queue = queue.concat([{"toolCallId": tcId, "command": cmd}]);
             return;
         }
         toolCallId = tcId;
         command = cmd;
+        refreshAudit(cmd);
+        commandScroll.contentY = 0;
         active = true;
     }
 
@@ -31,127 +54,86 @@ Item {
         active = false;
         toolCallId = "";
         command = "";
+        audit = ({});
     }
 
     function processNext() {
         if (queue.length > 0) {
-            var next = queue.shift();
+            var next = queue[0];
+            queue = queue.slice(1);
             toolCallId = next.toolCallId;
             command = next.command;
+            refreshAudit(next.command);
+            commandScroll.contentY = 0;
         } else {
-            active = false;
-            toolCallId = "";
-            command = "";
+            clear();
         }
     }
 
-    Rectangle {
-        anchors.fill: parent
-        color: "#CC000000"
-        MouseArea { anchors.fill: parent }
+    function resolve(allow) {
+        if (!active) return;
+        var id = toolCallId;
+        // 先推进队列，避免同步回调清空队列后又错误地处理下一项。
+        processNext();
+        if (allow) root.approved(id);
+        else root.denied(id);
     }
 
-    Rectangle {
-        id: dialogCard
-        width: 290
-        height: contentCol.height + 24
-        anchors.centerIn: parent
-        radius: 16
-        color: "#1C2533"
-        border.width: 1
-        border.color: "#FF6B35"
+    YTwoButtonDialog {
+        id: confirmDialog
+        anchors.fill: parent
+        // 原生组件左侧 buttonItemConfirm 是取消，右侧 buttonItemCancel 是确认。
+        buttonItemConfirm.text: "拒绝"
+        buttonItemCancel.text: "执行"
+        tipItem.text: ""
+        onClickedConfirm: root.resolve(true)
+        onClickedCancel: root.resolve(false)
+        onClosed: {
+            root.resolve(false);
+            if (root.active) show();
+        }
+    }
+
+    Flickable {
+        id: commandScroll
+        parent: confirmDialog.tipItem
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: commandColumn.height
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
 
         Column {
-            id: contentCol
-            anchors {
-                left: parent.left
-                right: parent.right
-                top: parent.top
-                margins: 12
-            }
-            spacing: 8
+            id: commandColumn
+            width: commandScroll.width
+            spacing: 4
 
-            Text {
-                text: root.queue.length > 0
-                    ? "AI 请求执行命令 (" + (root.queue.length + 1) + ")"
-                    : "AI 请求执行命令"
-                color: "#FF6B35"
+            YText {
+                width: parent.width
+                text: "AI 请求执行命令" + (root.queue.length > 0 ? "（待处理 " + root.queue.length + "）" : "")
                 font.pixelSize: 13
                 font.bold: true
-                font.family: root.fontFamily || ""
+                font.family: qmlGlobal.fontFamilyZhCn
+                wrapMode: Text.Wrap
             }
 
-            Rectangle {
+            YText {
                 width: parent.width
-                height: Math.min(cmdText.implicitHeight + 12, 60)
-                radius: 8
-                color: "#111922"
-                border.width: 1
-                border.color: "#2B3A4A"
-                clip: true
-
-                Flickable {
-                    anchors.fill: parent
-                    anchors.margins: 6
-                    contentWidth: cmdText.implicitWidth
-                    contentHeight: cmdText.implicitHeight
-                    clip: true
-
-                    Text {
-                        id: cmdText
-                        text: root.command
-                        color: "#E0E0E0"
-                        font.pixelSize: 11
-                        font.family: "monospace"
-                        wrapMode: Text.Wrap
-                        width: parent.parent.width - 12
-                    }
-                }
+                text: root.command
+                textFormat: Text.PlainText
+                font.pixelSize: 12
+                font.family: qmlGlobal.fontFamilyZhCn
+                wrapMode: Text.WrapAnywhere
             }
 
-            Row {
-                anchors.horizontalCenter: parent.horizontalCenter
-                spacing: 16
-
-                Rectangle {
-                    width: 100; height: 32; radius: 10
-                    color: "#2E1A1A"
-                    border.width: 1; border.color: "#4A2A2A"
-                    Text {
-                        anchors.centerIn: parent
-                        text: "拒绝"
-                        color: "#FF453A"
-                        font.pixelSize: 13
-                        font.family: root.fontFamily || ""
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        onClicked: {
-                            root.denied(root.toolCallId);
-                            root.processNext();
-                        }
-                    }
-                }
-
-                Rectangle {
-                    width: 100; height: 32; radius: 10
-                    color: "#1A2E1A"
-                    border.width: 1; border.color: "#2A4A2A"
-                    Text {
-                        anchors.centerIn: parent
-                        text: "执行"
-                        color: "#4CAF50"
-                        font.pixelSize: 13
-                        font.family: root.fontFamily || ""
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        onClicked: {
-                            root.approved(root.toolCallId);
-                            root.processNext();
-                        }
-                    }
-                }
+            YText {
+                width: parent.width
+                visible: text !== ""
+                text: root.warningsText()
+                textFormat: Text.PlainText
+                font.pixelSize: 11
+                font.family: qmlGlobal.fontFamilyZhCn
+                wrapMode: Text.Wrap
             }
         }
     }

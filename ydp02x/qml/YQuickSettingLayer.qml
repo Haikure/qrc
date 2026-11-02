@@ -190,14 +190,10 @@ Item {
                 text: timeManager.currentTime
             }
 
-            YImage {
-                id: id_headset_icon
-                anchors.left: id_time.right
-                anchors.leftMargin: 4
+            YConnectionIndicators {
+                anchors.right: id_battery_value.left
+                anchors.rightMargin: 8
                 anchors.verticalCenter: parent.verticalCenter
-                sourceSize: Qt.size(14, 14)
-                imageName: "settings/bluetooth-headset"
-                visible: blueToothManager.link || systemBase.digHeadset
             }
 
             YText {
@@ -211,58 +207,21 @@ Item {
                 text: ("%1%").arg(batteryManager.power)
             }
 
-            Item {
+            YBatteryIndicator {
                 id: id_battery_icon
-                anchors.right: parent.right
-                anchors.rightMargin: 16
+                anchors.right: batteryManager.charging ? id_charging_icon.left : parent.right
+                anchors.rightMargin: batteryManager.charging ? 0 : 16
                 anchors.verticalCenter: parent.verticalCenter
-                width: 27
-                height: 14
-
-                readonly property real level: Math.max(0, Math.min(100, batteryManager.power)) / 100
-                readonly property color fillColor: batteryManager.charging ? "#65D6A4"
-                                                   : (level < 0.2 ? YColors.red : "#EEF1F6")
-
-                Rectangle {
-                    id: id_battery_body
-                    anchors.left: parent.left
-                    width: 24
-                    height: parent.height
-                    radius: 3
-                    color: "#14FFFFFF"
-                    border.width: 1
-                    border.color: "#A6FFFFFF"
-                    antialiasing: true
-
-                    Rectangle {
-                        anchors.left: parent.left
-                        anchors.leftMargin: 3
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: id_battery_icon.level > 0
-                               ? Math.max(1, Math.round((parent.width - 6) * id_battery_icon.level)) : 0
-                        height: parent.height - 6
-                        radius: 1
-                        color: id_battery_icon.fillColor
-                    }
-                }
-
-                Rectangle {
-                    anchors.left: id_battery_body.right
-                    anchors.leftMargin: 1
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 2
-                    height: 6
-                    radius: 1
-                    color: id_battery_body.border.color
-                }
+                percentage: batteryManager.power
+                charging: batteryManager.charging
             }
 
             YImage {
                 id: id_charging_icon
-                anchors.right: id_battery_value.left
-                anchors.rightMargin: 4
+                anchors.right: parent.right
+                anchors.rightMargin: 16
                 anchors.verticalCenter: parent.verticalCenter
-                sourceSize: Qt.size(12, 12)
+                sourceSize: Qt.size(14, 14)
                 imageName: "ic_battery_flash"
                 visible: batteryManager.charging
             }

@@ -27,27 +27,18 @@ YPage {
     property int currentPinyinLen: 0
     property bool voiceInputActive: false
     property string lastVoiceResult: ""
+    property bool resettingInput: false
 
     RimeWrapper {
         id: id_rime_backend
+        schemaId: rime.currentSchemaId
+
+        onPreeditTextChanged: replacePinyinComposition(id_rime_backend.preeditText)
 
         onCommitText: {
-            console.log("Rime Commit: " + text + ", Current Raw Pinyin Len: " + currentPinyinLen);
-
-            for (var i = 0; i < currentPinyinLen; i++) {
-                id_input_text_title_area.delChar();
-            }
-
+            replacePinyinComposition("");
             id_input_text_title_area.enterChar(text);
-
-            var remaining = id_rime_backend.preeditText;
-            if (remaining.length > 0) {
-                id_input_text_title_area.enterChar(remaining);
-                currentPinyinLen = remaining.length;
-            } else {
-                currentPinyinLen = 0;
-                id_candidate_model.clear();
-            }
+            replacePinyinComposition(id_rime_backend.preeditText);
         }
 
         onCandidatesChanged: {
@@ -61,8 +52,20 @@ YPage {
         }
     }
 
+    function replacePinyinComposition(preedit) {
+        var previousLength = currentPinyinLen;
+        currentPinyinLen = 0;
+        for (var i = 0; i < previousLength; ++i)
+            id_input_text_title_area.delChar();
+        if (preedit.length > 0)
+            id_input_text_title_area.enterChar(preedit);
+        currentPinyinLen = preedit.length;
+    }
+
     function togglePinyinMode() {
         isPinyinMode = !isPinyinMode;
+        if (!isPinyinMode)
+            currentPinyinLen = 0;
         id_rime_backend.clear();
         id_candidate_model.clear();
         currentPinyinLen = 0;
@@ -95,11 +98,8 @@ YPage {
             return;
 
         if (isPinyinMode && currentPinyinLen > 0) {
-            for (var i = 0; i < currentPinyinLen; i++)
-                id_input_text_title_area.delChar();
             id_rime_backend.clear();
             id_candidate_model.clear();
-            currentPinyinLen = 0;
         }
 
         lastVoiceResult = text;
@@ -109,7 +109,7 @@ YPage {
 
     function resetInput(text) {
         // 输入页是复用实例：滚动位置必须一起复位，否则再次打开会停在上一轮的位置。
-        id_input_flickable.contentY = 0;
+        resettingInput = true;
         isPinyinMode = false;
         id_rime_backend.clear();
         id_candidate_model.clear();
@@ -117,19 +117,22 @@ YPage {
         id_input_text_title_area.clear();
         if (text && text.length > 0)
             id_input_text_title_area.enterChar(text);
+        id_input_flickable.contentY = 0;
+        resettingInput = false;
     }
 
     function enterText(text) {
         console.log("Input: " + text + ", PinyinMode: " + isPinyinMode);
 
         if (isPinyinMode) {
-            var lowerText = text.toLowerCase();
-
-            id_input_text_title_area.enterChar(text);
-
-            currentPinyinLen += text.length;
-
-            id_rime_backend.processKey(lowerText);
+            if (rime.deploying || rime.syncing)
+                return;
+            if (!id_rime_backend.processKey(text.toLowerCase())) {
+                // Keep unhandled text outside the composition tracked at the cursor.
+                currentPinyinLen = 0;
+                id_rime_backend.clear();
+                id_input_text_title_area.enterChar(text);
+            }
         } else {
             id_input_text_title_area.enterChar(text);
         }
@@ -177,6 +180,13 @@ YPage {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: id_top_spacer.bottom
+            property real previousHeight: height
+            onHeightChanged: {
+                // Keep the controls below the editor stationary as its text wraps.
+                if (!id_input_page.resettingInput)
+                    id_input_flickable.contentY = Math.max(0, id_input_flickable.contentY + height - previousHeight);
+                previousHeight = height;
+            }
             onBacked: {
                 backButtonClicked();
             }
@@ -274,7 +284,7 @@ YPage {
                         anchors.centerIn: parent
                         text: model.text
                         font.pixelSize: 22
-                        color: "#FFFFFF"
+                        color: YColors.white
                     }
 
                     MouseArea {
@@ -324,8 +334,6 @@ YPage {
 
             onDelChar: {
                 if (isPinyinMode && currentPinyinLen > 0) {
-                    id_input_text_title_area.delChar();
-                    currentPinyinLen = Math.max(0, currentPinyinLen - 1);
                     id_rime_backend.processKey("BackSpace");
                 } else {
                     id_input_text_title_area.delChar();
@@ -345,10 +353,8 @@ YPage {
                 id_input_text_title_area.clear();
             }
             onNewLine: {
-                if (currentPinyinLen > 0) {
-                    id_rime_backend.clear();
-                    currentPinyinLen = 0;
-                }
+                if (currentPinyinLen > 0)
+                    id_rime_backend.processKey("Return");
                 id_input_text_title_area.enterChar('\n');
             }
             onRequestTogglePinyin: {

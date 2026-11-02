@@ -120,6 +120,7 @@ Item {
 
     Connections {
         target: keyBoard
+        enabled: id_input_core.visible
         function onScanFinished(content) {
             id_input_core.insert(id_input_core.cursorPosition, content)
             if (!id_input_core.activeFocus) {
