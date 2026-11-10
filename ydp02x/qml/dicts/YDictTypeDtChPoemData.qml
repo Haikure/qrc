@@ -157,6 +157,26 @@ Item {
         } // Repeater id_detail_content_repeater
 
 
+        YReadingLoopControl {
+            id: id_poem_reading_loop
+            visible: available && jsonPoemData !== null
+                     && typeof jsonPoemData.audio !== "undefined" && jsonPoemData.audio.length > 0
+            actionText: "循环朗读"
+            contentKey: jsonPoemData === null ? "" : JSON.stringify(jsonPoemData)
+            playOnce: function() {
+                var status = resultManager.playPoemAudioFile(jsonPoemData.audio, jsonPoemData.id)
+                if (status !== 0) {
+                    qmlGlobal.showToast(status === 1 ? YTranslateText.downloadingSource : YTranslateText.noNetworkTip,
+                                        YColors.grayText)
+                    return 0
+                }
+                id_poem_audiourl_button.audioPlayId = Number(qmlGlobal.audioPlayId)
+                id_poem_audiourl_button.icon = "audioplayer/audioplayer-pause-red"
+                id_poem_audiourl_button.text = YTranslateText.stopReading
+                return qmlGlobal.audioPlayId
+            }
+        }
+
         Row {
             id: id_icon_row
             spacing: 6
@@ -193,6 +213,7 @@ Item {
             }
 
             onValidClicked: {
+                id_poem_reading_loop.cancel(false)
                 if (id_poem_audiourl_button.text == YTranslateText.stopReading)
                 {
                     id_poem_audiourl_button.icon = "audioplayer/audioplayer-play-red"
@@ -266,6 +287,7 @@ Item {
             }
 
             onValidClicked: {
+                id_poem_reading_loop.cancel(false)
                 if(id_poem_explain_button.text == YTranslateText.stopExplain)
                 {
                     id_poem_explain_button.icon = "audioplayer/audioplayer-explain"

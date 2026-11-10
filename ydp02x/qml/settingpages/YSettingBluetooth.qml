@@ -121,6 +121,9 @@ YSettingItemPage {
                 height: 60
                 opacity: id_bluetooth_item.pressed ? 0.6 : 1
                 objectName: "YSettingBluetooth.qml_id_bluetooth_item_index" + index
+                property var batteryLevel: bluetoothBattery.percentages[String(model.modelData.addr).toUpperCase()]
+                property string deviceName: bluetoothBattery.names[String(model.modelData.addr).toUpperCase()]
+                                            || model.modelData.devName
                 YSettingItemBackground {
                     anchors.fill: parent
                     anchors.bottomMargin: 8
@@ -135,7 +138,7 @@ YSettingItemPage {
                         spacing: 2
 
                         YTextMedium {
-                            text: model.modelData.devName
+                            text: id_bluetooth_item.deviceName
                             anchors.left: parent.left
                             anchors.right: parent.right
                             elide: YText.ElideRight
@@ -150,7 +153,9 @@ YSettingItemPage {
                             text: {
                                 switch (model.modelData.linkStatus) {
                                 case YEnum.LINKED:
-                                    return YTranslateText.connectSuccess
+                                    return YTranslateText.connectSuccess + " · "
+                                            + (id_bluetooth_item.batteryLevel === undefined
+                                               ? qsTr("电量未知") : id_bluetooth_item.batteryLevel + "%")
                                 case YEnum.LINKING:
                                     return YTranslateText.conneting
                                 case YEnum.DISCONNECTING:
@@ -184,7 +189,7 @@ YSettingItemPage {
                         }
                         break
                     case YEnum.LINKED:
-                        id_bluetooth_detail_loader.devName = model.modelData.devName
+                        id_bluetooth_detail_loader.devName = id_bluetooth_item.deviceName
                         id_bluetooth_detail_loader.addrName = model.modelData.addr
                         id_bluetooth_detail_loader.active = true
                         break

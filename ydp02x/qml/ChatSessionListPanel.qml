@@ -39,7 +39,6 @@ Rectangle {
     function open() {
         width = panelWidth;
         isOpen = true;
-        refreshSessions();
     }
 
     function close() {
@@ -54,21 +53,43 @@ Rectangle {
             open();
     }
 
+    // 旧数据兼容；按实际时间比较，避免 ISO 时区偏移影响字符串排序。
+    function conversationTime(session) {
+        var candidates = [session.lastConversationAt, session.updatedAt, session.createdAt];
+        for (var i = 0; i < candidates.length; ++i) {
+            if (candidates[i]) {
+                var time = Date.parse(candidates[i]);
+                if (!isNaN(time))
+                    return time;
+            }
+        }
+        return 0;
+    }
+
+    function conversationTimeLabel(session) {
+        var time = conversationTime(session);
+        return time ? Qt.formatDateTime(new Date(time), "yyyy-MM-dd HH:mm") : "时间未知";
+    }
+
     function refreshSessions() {
         if (typeof chatbot !== 'undefined' && chatbot !== null && typeof chatbot.getSessions === 'function') {
             var jsonStr = chatbot.getSessions();
             try {
                 var data = JSON.parse(jsonStr);
-                sessionsData = data.sessions || [];
-                activeSessionId = data.activeSessionId || "";
-                // 按更新时间倒序排列
-                sessionsData.sort(function (a, b) {
-                    if (a.updatedAt > b.updatedAt)
-                        return -1;
-                    if (a.updatedAt < b.updatedAt)
-                        return 1;
-                    return 0;
+                var sessions = (data.sessions || []).filter(function (session) {
+                    return session && Number(session.messageCount) > 0;
                 });
+                activeSessionId = data.activeSessionId || "";
+                // 先排好再赋值触发模型更新；同一时间用 ID 固定顺序，刷新不跳动。
+                sessions.sort(function (a, b) {
+                    var delta = conversationTime(b) - conversationTime(a);
+                    if (delta !== 0)
+                        return delta;
+                    var aId = String(a.id || "");
+                    var bId = String(b.id || "");
+                    return aId < bId ? -1 : aId > bId ? 1 : 0;
+                });
+                sessionsData = sessions;
             } catch (e) {
                 console.error("解析会话列表失败: " + e);
                 sessionsData = [];
@@ -80,6 +101,23 @@ Rectangle {
     onIsOpenChanged: {
         if (isOpen)
             refreshSessions();
+    }
+
+    Connections {
+        target: typeof chatbot !== "undefined" ? chatbot : null
+        function onSessionsChanged() {
+            if (id_root.isOpen)
+                id_root.refreshSessions();
+        }
+        function onSessionSwitched(sessionId) {
+            if (id_root.isOpen)
+                id_root.refreshSessions();
+        }
+    }
+
+    // 拦住面板空白处的点击，避免穿透到外侧关闭遮罩。
+    MouseArea {
+        anchors.fill: parent
     }
 
     // 面板内容（仅在宽度 > 0 时有意义）
@@ -189,14 +227,17 @@ Rectangle {
                         font.family: qmlGlobal.fontFamilyZhCn
                         font.bold: modelData.id === id_root.activeSessionId
                         elide: Text.ElideRight
-                        width: parent.width - 50
+                        width: parent.width - 26
                     }
 
                     Text {
-                        text: (modelData.messageCount || 0) + " 条消息"
-                        color: "#5A6B7D"
+                        text: id_root.conversationTimeLabel(modelData) + " · " + (modelData.messageCount || 0) + "条"
+                        color: "#A3B4C5"
                         font.pixelSize: 9
                         font.family: qmlGlobal.fontFamilyZhCn
+                        width: parent.width - 26
+                        elide: Text.ElideRight
+                        maximumLineCount: 1
                     }
                 }
 

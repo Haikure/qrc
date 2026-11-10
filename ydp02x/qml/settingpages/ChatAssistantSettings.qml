@@ -27,8 +27,27 @@ YBackButtonPage {
         }
     }
 
+    property var titleModels: []
+    property string titleModelLabel: "请选择"
+    function refreshTitleModels() {
+        try { titleModels = JSON.parse(chatbot.getModelSummaries()).models || []; }
+        catch (e) { titleModels = []; }
+        titleModelLabel = titleModelName();
+    }
+    function titleModelName() {
+        for (var i = 0; i < titleModels.length; ++i)
+            if (titleModels[i].id === chatbot.autoTitleModelId) return titleModels[i].name;
+        return "请选择";
+    }
+    Connections {
+        target: chatbot
+        onModelsChanged: id_setting_item.refreshTitleModels()
+        onAutoTitleSettingsChanged: id_setting_item.refreshTitleModels()
+    }
+
     property bool showMathSettings: false
     Component.onCompleted: {
+        refreshTitleModels();
         if (showMathSettings) Qt.callLater(function() {
             id_flickable.contentY = Math.max(0, Math.min(mathRenderTitle.y + id_column.y,
                 id_flickable.contentHeight - id_flickable.height));
@@ -130,6 +149,36 @@ YBackButtonPage {
                 onTimerTriggered: {
                     mod.voiceChatEnabled = !mod.voiceChatEnabled;
                 }
+            }
+
+            DescribedSwitchItem {
+                title: "AI 自动标题"
+                description: "使用独立模型生成；手动改名后不再覆盖"
+                switchOn: chatbot.autoTitleEnabled
+                interval: 0
+                onTimerTriggered: chatbot.autoTitleEnabled = !chatbot.autoTitleEnabled
+            }
+
+            DescribedClickableTextBox {
+                title: "标题模型"
+                describe: id_setting_item.titleModelLabel
+                describeItem.width: width - 34
+                onClicked: {
+                    var models = id_setting_item.titleModels;
+                    if (!models.length) return;
+                    var next = 0;
+                    for (var i = 0; i < models.length; ++i)
+                        if (models[i].id === chatbot.autoTitleModelId) next = (i + 1) % models.length;
+                    chatbot.autoTitleModelId = models[next].id;
+                    id_setting_item.refreshTitleModels();
+                }
+            }
+
+            YSettingAboutClickableItem {
+                title: "标题频率"
+                value: chatbot.autoTitleFrequency === 3 ? "每 3 轮" : "仅首轮"
+                imageName: "settings/info_more_arrow"
+                onClicked: chatbot.autoTitleFrequency = chatbot.autoTitleFrequency === 3 ? 0 : 3
             }
 
             YSettingAboutClickableItem {

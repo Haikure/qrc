@@ -102,6 +102,30 @@ Item {
             implicitHeight: 10
         }
 
+        YReadingLoopControl {
+            id: id_word_reading_loop
+            visible: available && isFirstDict
+                     && (resultManager.currentQueryType === YEnum.WGT_En
+                         || resultManager.currentQueryType === YEnum.WGT_En_Group
+                         || resultManager.currentQueryType === YEnum.WGT_Ch
+                         || resultManager.currentQueryType === YEnum.WGT_Ch_Group
+                         || resultManager.currentQueryType === YEnum.WGT_Ko
+                         || resultManager.currentQueryType === YEnum.WGT_Ko_Group)
+            contentKey: resultManager.currentQuery + "\n" + id_dict_type_base_item.content
+                        + "\n" + resultManager.phoneticSymbolJson + "\n" + chPinYinsSound
+                        + "\n" + settingManager.autoPronounceType
+            playOnce: function() {
+                var en = resultManager.currentQueryType === YEnum.WGT_En
+                        || resultManager.currentQueryType === YEnum.WGT_En_Group
+                var seq = soundCenter.play(resultManager.currentQuery, resultManager.getSoundLanguage(),
+                                           en ? resultManager.currentQuery :
+                                                (chPinYinsSound === null ? resultManager.phoneticSymbolJson : chPinYinsSound),
+                                           en ? settingManager.autoPronounceType + 1 : settingManager.autoPronounceType)
+                qmlGlobal.audioPlayId = seq
+                return seq
+            }
+        }
+
         YLoader {
             id: id_audio_play_buttons_loader
             active: isFirstDict && ((dictType !== YEnum.DtChChinese || YEnum.WGT_Ch_Group === resultManager.currentQueryType) && dictType !== YEnum.DtChLarge &&

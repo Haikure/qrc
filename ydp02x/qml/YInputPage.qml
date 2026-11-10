@@ -402,16 +402,23 @@ YPage {
 
         Rectangle {
             id: id_highlight_item
+            property string iconName: ""
             width: visible ? 66 : 0
             height: visible ? 56 : 0
             radius: 12
-            visible: id_highlight_item_content.text.length > 0
+            visible: id_highlight_item_content.text.length > 0 || iconName.length > 0
             color: "#36373D"
             YTextMedium {
                 id: id_highlight_item_content
                 font.pixelSize: 18
                 anchors.centerIn: parent
                 text: ""
+            }
+            YImage {
+                anchors.centerIn: parent
+                sourceSize: Qt.size(40, 40)
+                imageName: id_highlight_item.iconName
+                visible: imageName.length > 0
             }
         }
     }

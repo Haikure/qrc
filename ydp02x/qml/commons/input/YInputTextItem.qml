@@ -30,6 +30,7 @@ YMouseArea {
         _hideHighlightTimer.stop()
         var globalPos = id_input_text_item.mapToItem(id_highlight_item.parent, 0, 0)
         id_highlight_item_content.text = btnText
+        id_highlight_item.iconName = iconMode ? iconName : ""
         // 注意：id_highlight_item.width/height 绑定到 visible 属性，
         // 在此函数调用时绑定的值尚未重新求值（仍为 0），因此直接使用常量
         id_highlight_item.x = globalPos.x + id_input_text_item.width / 2 - 33

@@ -951,7 +951,9 @@ YPage {
                         // Old files never recorded success; leave that uncertainty visible.
                         if (/取消|中断|拒绝/.test(result)) status = "cancelled";
                     }
-                    legacy.push({key: id + ":tool:" + c, callId: calls[c].id, state: status,
+                    var fn = calls[c].function || {};
+                    legacy.push({key: id + ":tool:" + c, batchId: id, sessionId: chatbot.currentSessionId,
+                                 callId: calls[c].id, name: fn.name || "", arguments: fn.arguments || "", state: status,
                                  text: "历史工具调用（" + (status === "cancelled" ? "已取消" : "状态未记录") + "）",
                                  result: result});
                 }
@@ -1566,7 +1568,7 @@ YPage {
                             var autoTitle = displayText.substring(0, 20);
                             if (displayText.length > 20)
                                 autoTitle += "...";
-                            chatbot.renameSession(activeId, autoTitle);
+                            chatbot.setSessionPreviewTitle(activeId, autoTitle);
                             break;
                         }
                     }
@@ -2410,6 +2412,19 @@ YPage {
             onAttachImageRequested: id_chat_assistant_page._startDraftCapture()
         }
 
+        // 接住面板外的整次点击；面板本身在更高层，列表与按钮照常操作。
+        MouseArea {
+            anchors.fill: parent
+            z: 199
+            visible: id_session_panel.isOpen || id_message_index_panel.isOpen
+                     || id_session_panel.width > 0 || id_message_index_panel.width > 0
+            preventStealing: true
+            onClicked: {
+                id_session_panel.close();
+                id_message_index_panel.close();
+            }
+        }
+
         ChatSessionListPanel {
             id: id_session_panel
             anchors {
@@ -2418,6 +2433,10 @@ YPage {
                 left: parent.left
             }
             z: 200
+            onIsOpenChanged: {
+                if (isOpen)
+                    id_message_index_panel.close();
+            }
 
             onSessionSelected: {
                 if (typeof chatbot !== 'undefined' && chatbot !== null) {
@@ -2452,6 +2471,10 @@ YPage {
             z: 200
             messageModel: chatModel
             fontFamily: qmlGlobal.fontFamilyZhCn
+            onIsOpenChanged: {
+                if (isOpen)
+                    id_session_panel.close();
+            }
 
             onNavigateToMessage: navigateToMessageIndex(messageIndex)
             onCloseRequested: close()

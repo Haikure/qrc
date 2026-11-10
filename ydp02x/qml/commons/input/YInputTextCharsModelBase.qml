@@ -50,12 +50,14 @@ Column {
         // 在此函数被调用时绑定的值尚未重新求值（仍为 0），
         // 因此直接使用常量 66/2=33, 56/2=28
         id_highlight_item_content.text = text;
+        id_highlight_item.iconName = "";
         id_highlight_item.x = posX - 33;
         id_highlight_item.y = posY - 28;
     }
 
     function charRelessed() {
         id_highlight_item_content.text = "";
+        id_highlight_item.iconName = "";
     }
 
     Repeater {

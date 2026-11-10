@@ -184,7 +184,7 @@ YSettingItemPage {
             }
             YText {
                 width: parent.width
-                text: "预置顺序：gh-proxy.com → ghproxy.net → gh-proxy.org → GitHub → 原 jsDelivr。下载优先使用本次检查成功的镜像。"
+                text: "预置顺序：gh-proxy.com → ghproxy.net → gh-proxy.org → githubproxy.cc → GitHub → 原 jsDelivr。下载优先使用本次检查成功的镜像。"
                 wrapMode: Text.Wrap
                 font.pixelSize: 14
                 color: YColors.grayText

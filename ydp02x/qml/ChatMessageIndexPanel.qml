@@ -90,6 +90,11 @@ Rectangle {
             refreshPreviews();
     }
 
+    // 拦住面板空白处的点击，列表和按钮仍在上层接收事件。
+    MouseArea {
+        anchors.fill: parent
+    }
+
     // 面板内容
     Column {
         anchors.fill: parent
