@@ -11,6 +11,7 @@ Item {
     height: !visible ? 0 : id_dict_type_base.height
     readonly property int dictType: model.modelData.dictType
     readonly property string content: model.modelData.content
+    property string pronunciationContent: content
     readonly property var dictJson: (YEnum.AsyncLocalTran === dictType || YEnum.NetTran === dictType) ? null : JSON.parse(content)
     readonly property bool isFirstDict: index <= 0
     default property alias sourceComponent: id_content_loader.sourceComponent
@@ -396,7 +397,7 @@ Item {
                         onValidClicked: {
                             if (playing) {
                                 id_sentence_buttons_grid.play(false)
-                                qmlGlobal.soundSentence(id_dict_type_base_item.content)
+                                qmlGlobal.soundSentence(id_dict_type_base_item.pronunciationContent)
                                 logManager.sendHttpLog("action=detail_trans_pronounce_click");
                             }
                         }

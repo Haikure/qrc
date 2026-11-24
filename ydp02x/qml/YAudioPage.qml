@@ -32,7 +32,7 @@ YBackButtonAudioPage {
                 id: id_my_imports_button
                 visible: !antiEmbs.active
                 name: "文件管理"
-                count: "Beta"
+                count: fileManager.rootMode ? "root" : ""
                 imageName: "audiopage/my_imports"
 
                 onValidClicked: {

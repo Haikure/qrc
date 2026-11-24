@@ -74,6 +74,22 @@ YSettingItemPage {
 
             YSettingSwitchItem {
                 implicitHeight: 52
+                title: "打开插件管理"
+                switchOn: locker.getScene('plugin_manager')
+                interval: 0
+                onTimerTriggered: locker.setScene('plugin_manager', switchOn)
+            }
+
+            YSettingSwitchItem {
+                implicitHeight: 52
+                title: "开启文件管理 root 模式"
+                switchOn: locker.getScene('filemanager_root')
+                interval: 0
+                onTimerTriggered: locker.setScene('filemanager_root', switchOn)
+            }
+
+            YSettingSwitchItem {
+                implicitHeight: 52
                 title: "重置选项页面"
                 switchOn: locker.getScene('reset_page')
                 interval: 0

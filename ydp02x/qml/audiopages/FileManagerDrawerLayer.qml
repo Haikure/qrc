@@ -11,6 +11,7 @@ YBackButtonPage {
     objectName: "YPage===FileManagerDrawerPage.qml"
 
     property bool passedVerification: false
+    property bool verifyingRoot: false
 
     Flickable {
         id: id_flickable
@@ -104,10 +105,29 @@ YBackButtonPage {
                 onTimerTriggered: {
                     if (id_setting_item.passedVerification == false && locker.enabled && locker.getScene("filemanager")) {
                         switchOn = !switchOn;
+                        id_setting_item.verifyingRoot = false;
                         id_setting_item.requestKeyboard();
                     }
                     if (!locker.enabled || !locker.getScene("filemanager") || id_setting_item.passedVerification == true) {
                         fileManager.showHiddenFiles = switchOn;
+                    }
+                }
+            }
+
+            DescribedSwitchItem {
+                id: root_mode_setting
+                title: "root 模式"
+                description: "访问全部系统目录（含隐藏文件）。误删系统文件可能导致无法启动；重启后关闭。"
+                switchOn: fileManager.rootMode
+                interval: 0
+                onTimerTriggered: {
+                    var enable = switchOn;
+                    switchOn = fileManager.rootMode;
+                    if (fileManager.setRootMode(enable, "")) {
+                        switchOn = fileManager.rootMode;
+                    } else {
+                        id_setting_item.verifyingRoot = true;
+                        id_setting_item.requestKeyboard();
                     }
                 }
             }
@@ -170,16 +190,23 @@ YBackButtonPage {
                 keyboardPage = null;
             });
             keyboardPage.inputFinished.connect(function (content) {
-                if (content === locker.password) {
-                    hidden_files_setting.switchOn = !hidden_files_setting.switchOn
-                    fileManager.showHiddenFiles = hidden_files_setting.switchOn;
-                    passedVerification = true;
+                var valid = id_setting_item.verifyingRoot
+                        ? fileManager.setRootMode(true, content)
+                        : locker.authorize("filemanager", content);
+                if (valid) {
+                    if (id_setting_item.verifyingRoot) {
+                        root_mode_setting.switchOn = fileManager.rootMode;
+                    } else {
+                        hidden_files_setting.switchOn = !hidden_files_setting.switchOn;
+                        fileManager.showHiddenFiles = hidden_files_setting.switchOn;
+                        passedVerification = true;
+                    }
                 } else {
                     qmlGlobal.showToast("密码错误，请重试", YColors.yellow);
-                    requestKeyboard();
+                    Qt.callLater(requestKeyboard);
                 }
             });
-            keyboardPage.placeHolderText = "请输入密码...";
+            keyboardPage.placeHolderText = id_setting_item.verifyingRoot ? "请输入 root 模式密码..." : "请输入密码...";
             keyboardPage.show();
             qmlGlobal.inputPageShowing = true;
         }

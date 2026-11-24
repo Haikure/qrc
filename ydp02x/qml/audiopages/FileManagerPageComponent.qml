@@ -226,6 +226,40 @@ YPage {
         }
     }
 
+    YTwoButtonDialog {
+        id: root_delete_warning
+        anchors.fill: parent
+        z: parent.z + 2
+        property string targetPath: ""
+        tipItem.text: "危险：root 删除不可恢复，可能导致系统无法启动！\n再次确认删除：\n" + targetPath
+        tipItem.textFormat: Text.PlainText
+        tipItem.font.pixelSize: 14
+        onClickedConfirm: {
+            fileManager.confirmRemoval(targetPath);
+            close();
+        }
+        onClickedCancel: {
+            fileManager.cancelRemoval();
+            close();
+        }
+        onClosed: fileManager.cancelRemoval()
+    }
+
+    Connections {
+        target: fileManager
+        function onRootRemovalConfirmationRequired(path) {
+            root_delete_warning.targetPath = path;
+            root_delete_warning.show();
+        }
+        function onDirectoryAboutToChange(backwards) {
+            id_delete_file_dialog.close();
+            root_delete_warning.close();
+        }
+        function onException(message) {
+            qmlGlobal.showToast(message, YColors.yellow);
+        }
+    }
+
     YPagePopHelper {
         id: id_page_pop_helper
 

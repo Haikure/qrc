@@ -38,6 +38,80 @@ YBackButtonPage {
     property alias isScannig: id_dict_listview.isScanning
     property bool closingScanResult: false
 
+    // The host can add a dictionary result after a native translation placeholder.
+    // Inspect every delegate, including unsupported/hidden dictionary types.
+    property bool pureTranslation: false
+    property string aiTranslationRequestKey: ""
+    function refreshPureTranslation() {
+        var onlyTranslation = id_dict_content_view_repeater.count > 0
+        for (var i = 0; i < id_dict_content_view_repeater.count; ++i) {
+            var row = id_dict_content_view_repeater.itemAt(i)
+            if (!row || (row.dictType !== YEnum.AsyncLocalTran && row.dictType !== YEnum.NetTran)) {
+                onlyTranslation = false
+                break
+            }
+        }
+        pureTranslation = onlyTranslation
+        if (!onlyTranslation) {
+            aiTranslationStart.stop()
+            aiTranslationRequestKey = ""
+            aiTranslation.cancel()
+        } else scheduleAiTranslation()
+    }
+    function scheduleAiTranslation() {
+        if (!pureTranslation || !visible || isScannig || !aiTranslation.enabled) {
+            aiTranslationStart.stop()
+            aiTranslationRequestKey = ""
+            aiTranslation.cancel()
+            return
+        }
+        aiTranslationStart.restart()
+    }
+    Timer {
+        id: aiTranslationStart
+        interval: 0
+        onTriggered: {
+            if (!id_dict_page.pureTranslation || !id_dict_page.visible || id_dict_page.isScannig) return
+            var key = resultManager.currentQuery + "\n" + resultManager.dstLang
+            if (key === id_dict_page.aiTranslationRequestKey) return
+            id_dict_page.aiTranslationRequestKey = key
+            // dstLang is resolved by the native translator from transLanguage settings.
+            aiTranslation.translate(resultManager.currentQuery, resultManager.dstLang, wifiManager.internetConnect)
+        }
+    }
+    Connections {
+        target: aiTranslation
+        function onSettingsChanged() {
+            id_dict_page.aiTranslationRequestKey = ""
+            id_dict_page.scheduleAiTranslation()
+        }
+    }
+    Connections {
+        target: queryTweaks
+        function onQueryStarting() {
+            id_dict_page.pureTranslation = false
+            id_dict_page.aiTranslationRequestKey = ""
+            aiTranslationStart.stop()
+            aiTranslation.cancel()
+        }
+        function onQueryReturned() { id_dict_page.refreshPureTranslation() }
+    }
+    Connections {
+        target: chatbot
+        function onModelsChanged() {
+            aiTranslation.cancel()
+            id_dict_page.aiTranslationRequestKey = ""
+            id_dict_page.scheduleAiTranslation()
+        }
+    }
+    Connections {
+        target: wifiManager
+        function onInternetConnectChanged() {
+            if (!wifiManager.internetConnect && id_dict_page.pureTranslation && aiTranslation.enabled)
+                aiTranslation.translate(resultManager.currentQuery, resultManager.dstLang, false)
+        }
+    }
+
     onOcrContentStringChanged:  {
         console.log("headviewModel:"+ocrContentString)
         //id_dict_listview.repeaterModel =  ocrContentString
@@ -45,6 +119,7 @@ YBackButtonPage {
     }
 
     onIsScannigChanged: {
+        scheduleAiTranslation()
         if(!isScannig)
             id_dict_content_view_repeater_empty_check_timer.restart()
         else {
@@ -790,11 +865,15 @@ YBackButtonPage {
                 Repeater {
                     id: id_dict_content_view_repeater
                     model: resultManager
+                    onItemAdded: id_dict_page.refreshPureTranslation()
+                    onItemRemoved: id_dict_page.refreshPureTranslation()
+                    onCountChanged: id_dict_page.refreshPureTranslation()
                     delegate: YLoader {
                         id: id_dict_content_view_delegate
                         asynchronous: false
                         readonly property int dictType: model.modelData.dictType
                         readonly property string content: model.modelData.content
+                        onDictTypeChanged: id_dict_page.refreshPureTranslation()
                         onContentChanged: {
                             if (typeof content != "undefined" && content.length)
                                 ocrContentString = ""
@@ -1191,6 +1270,9 @@ YBackButtonPage {
         target: resultManager
         ignoreUnknownSignals: true
         function onCurrentQueryChanged() {
+            aiTranslation.cancel()
+            aiTranslationRequestKey = ""
+            scheduleAiTranslation()
             sentenceMeanPos = 0
             needShowStrokeView = false
             id_stroke_info_item.isImagesExit = false
@@ -1199,6 +1281,11 @@ YBackButtonPage {
             id_dict_content_view_repeater_empty_check_timer.restart()
             interactiveLearningManager.wipeData()
             spellManager.phonics = ""
+        }
+        function onDstLangChanged() {
+            aiTranslation.cancel()
+            aiTranslationRequestKey = ""
+            scheduleAiTranslation()
         }
     }
 
@@ -1262,6 +1349,7 @@ YBackButtonPage {
     }
 
     Component.onDestruction: {
+        aiTranslation.cancel()
         console.log("YDictPage.qml===Component.onDestruction===called")
     }
 
@@ -1275,6 +1363,7 @@ YBackButtonPage {
     }
 
     onVisibleChanged: {
+        scheduleAiTranslation()
         upsetTopButtonStatus()
         if (visible) {
             //id_delay_pos_timer.restart()

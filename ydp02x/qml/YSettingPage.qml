@@ -40,10 +40,7 @@ YPage {
             group: qsTr("显示与输入"), icon: res.get("setting/torch"), page: "settingpages/Torch" },
         { id: "translate", settingIndex: YEnum.SettingIndex.Translate, label: YTranslateText.translate,
             group: qsTr("语言与学习"), icon: res.getDisk("settings/ic_translate"),
-            page: "settingpages/YSettingTranslate", logAction: "translate",
-            available: qmlGlobal.checkFeature(YEnum.FEATURE_LANG_JPN)
-                || qmlGlobal.checkFeature(YEnum.FEATURE_LANG_KOR)
-                || qmlGlobal.checkFeature(YEnum.FEATURE_LANG_ES) },
+            page: "settingpages/YSettingTranslate", logAction: "translate" },
         { id: "dictionary", settingIndex: YEnum.SettingIndex.Dict, label: YTranslateText.dictionary,
             group: qsTr("语言与学习"), icon: res.getDisk("settings/ic_dict"),
             page: "settingpages/YSettingDict", logAction: "dict" },

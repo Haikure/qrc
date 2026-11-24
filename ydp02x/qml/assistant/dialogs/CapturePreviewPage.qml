@@ -19,13 +19,14 @@ Item {
     property real zoomLevel: 1.0
     property string capturedImageBase64: ""
     property var capturedImages: []
+    property var queuedImages: []
     property string currentComposite: ""
     property int compositeFrameCount: 0
-    property string stitchDirection: ""
+    property string stitchDirection: "vertical"
     property string pendingDirection: ""
     property string displaySource: ""
-    property int operationSeq: 0
-    property int activeRequestId: 0
+    property double operationSeq: Date.now() * 1024
+    property double activeRequestId: 0
     property string pendingOperation: ""
 
     readonly property bool imageLoaded: phase === phaseCropping && capturedImageBase64 !== ""
@@ -63,6 +64,7 @@ Item {
     function cleanup() {
         pageActive = false;
         invalidateProcessing();
+        queuedImages = [];
         if (typeof qmlGlobal !== 'undefined' && qmlGlobal !== null)
             qmlGlobal.inputPageShowing = false;
         if (typeof cameraCapture !== 'undefined' && cameraCapture !== null)
@@ -74,8 +76,10 @@ Item {
     function updateCaptureEnabled() {
         if (typeof cameraCapture === 'undefined' || cameraCapture === null)
             return;
-        cameraCapture.captureEnabled = pageActive && phase === phaseWaiting && !processing
-                                       && capturedImages.length < maxFrames;
+        // Preview, manual cropping and background stitching must not disarm scanning.
+        cameraCapture.captureEnabled = pageActive
+                                       && capturedImages.length + queuedImages.length < maxFrames
+                                       && capturedDataSize(capturedImages) + capturedDataSize(queuedImages) < maxStoredBase64Chars;
     }
 
     function invalidateProcessing() {
@@ -89,9 +93,10 @@ Item {
     function resetAll() {
         invalidateProcessing();
         capturedImages = [];
+        queuedImages = [];
         currentComposite = "";
         compositeFrameCount = 0;
-        stitchDirection = "";
+        stitchDirection = cameraCapture.defaultStitchDirection;
         phase = phaseWaiting;
         capturedImageBase64 = "";
         displaySource = "";
@@ -115,6 +120,58 @@ Item {
         for (var i = 0; i < images.length; ++i)
             total += images[i].length;
         return total;
+    }
+
+    function acceptScan(base64Data) {
+        if (!pageActive) return;
+        if (!base64Data || capturedImages.length + queuedImages.length >= maxFrames
+                || capturedDataSize(capturedImages) + capturedDataSize(queuedImages) + base64Data.length > maxStoredBase64Chars) {
+            showError("本次扫描未加入：已达到图片数量或大小上限，请先保存或清空");
+            return;
+        }
+        var queue = queuedImages.slice();
+        queue.push(base64Data);
+        queuedImages = queue;
+        updateCaptureEnabled();
+        drainScans();
+    }
+
+    function drainScans() {
+        if (!pageActive || processing || queuedImages.length === 0) return;
+        if (phase === phaseCropping) {
+            // A new scan confirms the current manual crop, without another tap.
+            if (imagePreview.status === Image.Ready) onSaveCurrent();
+            return;
+        }
+        var images = capturedImages.slice();
+        images = images.concat(queuedImages);
+        queuedImages = [];
+        capturedImages = images;
+        rebuildOverview();
+    }
+
+    function rebuildOverview() {
+        currentComposite = "";
+        compositeFrameCount = 0;
+        phase = phaseOverview;
+        refreshOverviewSource();
+        resetCropAndViewport();
+        if (capturedImages.length === 1) {
+            currentComposite = capturedImages[0];
+            compositeFrameCount = 1;
+            refreshOverviewSource();
+        } else if (capturedImages.length > 1) {
+            onDirectionSelected(stitchDirection);
+        }
+        updateCaptureEnabled();
+    }
+
+    function onEditLast() {
+        if (processing || capturedImages.length === 0) return;
+        capturedImageBase64 = capturedImages[capturedImages.length - 1];
+        displaySource = "";
+        phase = phaseCropping;
+        resetCropAndViewport();
     }
 
     function refreshOverviewSource() {
@@ -209,6 +266,7 @@ Item {
 
     function onAbandonCurrent() {
         if (processing) return;
+        // Abandon the edit, not the already accepted scan.
         capturedImageBase64 = "";
         if (capturedImages.length === 0) {
             phase = phaseWaiting;
@@ -219,6 +277,7 @@ Item {
         }
         resetCropAndViewport();
         updateCaptureEnabled();
+        drainScans();
     }
 
     function onFinish() {
@@ -267,6 +326,7 @@ Item {
         processing = true;
         pendingOperation = "stitch";
         pendingDirection = dir;
+        stitchDirection = dir;
         activeRequestId = ++operationSeq;
         updateCaptureEnabled();
         cameraCapture.stitchImagesAsync(activeRequestId, capturedImages.slice(), dir);
@@ -277,32 +337,15 @@ Item {
         resetAll();
     }
 
-    function onContinueCapture() {
-        if (processing) return;
-        if (capturedImages.length >= maxFrames) {
-            showError("最多可拍摄 " + maxFrames + " 帧");
-            return;
-        }
-        capturedImageBase64 = "";
-        displaySource = "";
-        phase = phaseWaiting;
-        resetCropAndViewport();
-        updateCaptureEnabled();
-    }
 
-    function onReturnToOverview() {
-        if (processing || capturedImages.length === 0) return;
-        phase = phaseOverview;
-        refreshOverviewSource();
-        resetCropAndViewport();
-        updateCaptureEnabled();
-    }
 
     function updateImageBaseSize() {
         if (imagePreview.status === Image.Ready && imagePreview.implicitWidth > 0 && imagePreview.implicitHeight > 0) {
             imageBaseWidth = imagePreview.implicitWidth;
             imageBaseHeight = imagePreview.implicitHeight;
             resetCropAndViewport();
+            if (phase === phaseCropping && queuedImages.length > 0)
+                Qt.callLater(drainScans);
         }
     }
 
@@ -621,11 +664,10 @@ Item {
 
         Text {
             anchors { left: parent.left; leftMargin: 50; verticalCenter: parent.verticalCenter }
-            text: phase === phaseCropping ? "裁剪第 " + (capturedImages.length + 1) + " 帧"
-                                          : (phase === phaseWaiting
-                                             ? (capturedImages.length > 0 ? "等待第 " + (capturedImages.length + 1) + " 帧" : "扫描中")
-                                             : (needsDirection ? "选择拼接方向"
-                                                               : (capturedImages.length > 1 ? "拼图总览" : "图片预览")))
+            text: phase === phaseCropping ? "裁剪第 " + capturedImages.length + " 帧"
+                  : "已拍 " + capturedImages.length + " / " + maxFrames
+                    + (queuedImages.length > 0 ? "，待处理 " + queuedImages.length
+                       : capturedImages.length >= maxFrames ? "（已满）" : "，直接继续扫描")
             color: YColors.grayText
             font.pixelSize: 16; font.family: qmlGlobal.fontFamilyZhCn
         }
@@ -649,7 +691,7 @@ Item {
                 anchors { left: parent.left; leftMargin: 8; verticalCenter: parent.verticalCenter }
                 width: 50; height: 22; pixelSize: 10; color: "#3A2E2E"
                 border.width: 1; border.color: "#5A3E3E"
-                text: "放弃"; textColor: "#FF453A"
+                text: "取消裁剪"; textColor: "#FF453A"
                 onClicked: onAbandonCurrent()
             }
 
@@ -725,13 +767,20 @@ Item {
                 onClicked: onClear()
             }
 
-            YButton {
-                anchors.centerIn: parent
-                width: 64; height: 22; pixelSize: 10; color: "#2B5278"
-                border.width: 0
-                text: "继续拍摄"; textColor: "white"
-                enabled: capturedImages.length < maxFrames
-                onClicked: onContinueCapture()
+            Row {
+                anchors { left: parent.left; leftMargin: 58; verticalCenter: parent.verticalCenter }
+                spacing: 4
+                YButton {
+                    width: 44; height: 22; pixelSize: 10; color: "#2B5278"
+                    text: "裁剪"; textColor: "white"
+                    onClicked: onEditLast()
+                }
+                YButton {
+                    width: 44; height: 22; pixelSize: 10; color: "#2B5278"
+                    text: stitchDirection === "vertical" ? "竖拼" : "横拼"; textColor: "white"
+                    enabled: capturedImages.length > 1
+                    onClicked: onDirectionSelected(stitchDirection === "vertical" ? "horizontal" : "vertical")
+                }
             }
 
             YButton {
@@ -759,43 +808,6 @@ Item {
             }
         }
 
-        // 场景 D：等待下一次扫描时允许返回或直接完成
-        Item {
-            anchors.fill: parent
-            visible: phase === phaseWaiting && capturedImages.length > 0
-
-            YButton {
-                anchors { left: parent.left; leftMargin: 8; verticalCenter: parent.verticalCenter }
-                width: 64; height: 22; pixelSize: 10; color: "#1A3A5C"
-                border.width: 1; border.color: "#2B5278"
-                text: "返回预览"; textColor: "white"
-                onClicked: onReturnToOverview()
-            }
-
-            YButton {
-                // 等待下一次扫描时也可以把已拍帧逐张保存（不拼接）。
-                visible: capturedImages.length > 1
-                width: visible ? 56 : 0
-                height: 22; pixelSize: 10; color: "#2E4A6B"
-                border.width: 1; border.color: "#4A90D9"
-                text: "逐张保存"; textColor: "white"
-                anchors {
-                    right: phaseDFinish.left
-                    rightMargin: 4
-                    verticalCenter: parent.verticalCenter
-                }
-                onClicked: onFinishEach()
-            }
-
-            YButton {
-                id: phaseDFinish
-                anchors { right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
-                width: 54; height: 22; pixelSize: 10; color: "#4CAF50"
-                border.width: 0
-                text: "完成保存"; textColor: "white"
-                onClicked: onFinish()
-            }
-        }
     }
 
     // 连接相机捕获信号
@@ -803,23 +815,15 @@ Item {
         target: typeof cameraCapture !== 'undefined' && cameraCapture !== null ? cameraCapture : null
         ignoreUnknownSignals: true
         function onImageCaptured(base64Data) {
-            if (!pageActive || processing || phase !== phaseWaiting)
-                return;
-            if (!base64Data || base64Data.length > maxStoredBase64Chars) {
-                showError("捕获图片过大或数据无效");
-                return;
-            }
-            capturedImageBase64 = base64Data;
-            displaySource = "";
-            phase = phaseCropping;
-            zoomLevel = 1.0;
-            flickable.contentX = 0;
-            flickable.contentY = 0;
-            updateCaptureEnabled();
+            acceptScan(base64Data);
+        }
+
+        function onCaptureFailed(errorMessage) {
+            if (pageActive) showError(errorMessage);
         }
 
         function onCropImageCompleted(requestId, base64Data, errorMessage) {
-            if (requestId !== activeRequestId || pendingOperation !== "crop")
+            if (!pageActive || requestId !== activeRequestId || pendingOperation !== "crop")
                 return;
 
             activeRequestId = 0;
@@ -831,8 +835,8 @@ Item {
             }
 
             var newList = capturedImages.slice();
-            newList.push(base64Data);
-            if (newList.length > maxFrames || capturedDataSize(newList) > maxStoredBase64Chars) {
+            newList[newList.length - 1] = base64Data;
+            if (capturedDataSize(newList) + capturedDataSize(queuedImages) > maxStoredBase64Chars) {
                 showError("已达到图片数量或大小上限");
                 return;
             }
@@ -840,25 +844,12 @@ Item {
             capturedImages = newList;
             capturedImageBase64 = "";
             phase = phaseOverview;
-            resetCropAndViewport();
-
-            if (capturedImages.length === 1) {
-                currentComposite = capturedImages[0];
-                compositeFrameCount = 1;
-                refreshOverviewSource();
-            } else if (stitchDirection !== "") {
-                refreshOverviewSource();
-                onDirectionSelected(stitchDirection);
-            } else {
-                currentComposite = "";
-                compositeFrameCount = 0;
-                refreshOverviewSource();
-            }
-            updateCaptureEnabled();
+            if (queuedImages.length > 0) drainScans();
+            else rebuildOverview();
         }
 
         function onStitchImagesCompleted(requestId, base64Data, errorMessage) {
-            if (requestId !== activeRequestId || pendingOperation !== "stitch")
+            if (!pageActive || requestId !== activeRequestId || pendingOperation !== "stitch")
                 return;
 
             var completedDirection = pendingDirection;
@@ -869,6 +860,7 @@ Item {
             if (errorMessage !== "" || base64Data === "") {
                 refreshOverviewSource();
                 showError(errorMessage !== "" ? errorMessage : "图片拼接失败，请重试");
+                drainScans();
                 return;
             }
 
@@ -879,6 +871,7 @@ Item {
             refreshOverviewSource();
             resetCropAndViewport();
             updateCaptureEnabled();
+            drainScans();
         }
     }
 }

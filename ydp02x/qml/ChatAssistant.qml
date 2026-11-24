@@ -243,7 +243,7 @@ YPage {
     }
 
     // 清空草稿，并让所有在途的异步捕获/选文件回调失效（递增 request id）。
-    // 附件在发送成功前只存在于 QML 模型里，所以切会话/返回页面时清空即可，不会残留在任何 session 目录。
+    // 附件在发送成功前只存在于 QML 模型里；退出页面保留，切会话或取消草稿时清空。
     function _clearDraft(reason) {
         // 诊断日志：不打印正文/附件，只打印“谁清空了草稿 + 当时草稿发送状态”，用于定位失败回滚。
         console.log("[ChatAssistant] clearDraft reason=", reason || "unknown",
@@ -485,8 +485,6 @@ YPage {
         _captureRequestId = _draftRequestId;
         _captureSessionId = _draftSessionId;
         captureModeActive = true;
-        if (typeof cameraCapture !== 'undefined' && cameraCapture !== null)
-            cameraCapture.captureEnabled = true;
         id_pop_container.show('assistant/dialogs/CapturePreviewPage');
     }
 
@@ -605,15 +603,16 @@ YPage {
                 keyBoard.autoSendScan = keyBoard.autoSendScanConfig;
             Qt.callLater(_flushIdleWork);
         } else {
+            // 页面会缓存：保留草稿、附件及发送/失败回滚状态，只让已关闭弹层的异步结果失效。
+            _attachmentReadSeq++;
+            _draftRequestId++;
+            resetCaptureMode();
             id_pop_container.closeAllPages();
             _preparingSend = false;
             if (_mathProbeRequest !== null) {
                 _mathProbeRequest.abort();
                 _mathProbeRequest = null;
             }
-            // 离开页面时草稿和附件一律丢弃：未落盘的附件不能留在任何 session 目录里。
-            console.log("[ChatAssistant] page-hidden armed=", _draftRollbackArmed, "sending=", sending);
-            _clearDraft("page-hidden");
             _clearPendingTexts();
             if (typeof keyBoard !== 'undefined' && keyBoard !== null)
                 keyBoard.autoSendScan = false;
@@ -797,9 +796,19 @@ YPage {
         }
     }
 
+    function _nextResponseRowId(kind) {
+        var base = chatbot.responseMessageId + ":" + kind, offset = 0;
+        for (var i = 0; i < chatModel.count; ++i) {
+            var row = chatModel.get(i), id = row.messageId || "";
+            if (id === base || id.indexOf(base + ":") === 0)
+                offset += (row.raw_text || "").length;
+        }
+        return base + (offset > 0 ? ":" + offset : "");
+    }
+
     function _appendAnswerPlaceholder() {
         chatModel.append({
-            "messageId": chatbot.responseMessageId + ":answer",
+            "messageId": _nextResponseRowId("answer"),
             "text": "",
             "raw_text": "",
             "reasoning_text": "",
@@ -889,7 +898,12 @@ YPage {
         if (!found) entries.push(state);
         var row = _toolRow(state.batchId, entries);
         if (index >= 0) chatModel.set(index, row);
-        else replaceThinkingOrAppend(row);
+        else {
+            // Only the first appearance creates a text boundary. Progress and
+            // completion updates must not split an answer already following it.
+            finalizeLastAssistantIfNeeded();
+            replaceThinkingOrAppend(row);
+        }
         _scheduleScrollToBottom();
     }
 
@@ -918,25 +932,48 @@ YPage {
             rows.push(row);
             emitted[id] = true;
         }
+        function segment(m, idx, reasoning, content, attachments, reasoningOffset, answerOffset) {
+            var id = m.messageId;
+            if (reasoning) {
+                var reasoningRow = _makeReasoningEntry(reasoning);
+                reasoningRow.messageId = id + ":reasoning" + (reasoningOffset > 0 ? ":" + reasoningOffset : "");
+                reasoningRow.isComplete = true;
+                rows.push(reasoningRow);
+            }
+            if (m.role === "user" || content || attachments.length) {
+                var suffix = m.role === "user" ? ":user" : ":answer" + (answerOffset > 0 ? ":" + answerOffset : "");
+                rows.push({messageId: id + suffix,
+                           text: m.role === "user" ? content : "", raw_text: content, reasoning_text: "",
+                           attachmentsJson: JSON.stringify(attachments), isUser: m.role === "user", isComplete: true,
+                           isThinking: false, isReasoning: false, isToolCall: false,
+                           toolCallId: "", toolState: "", historyIndex: idx});
+            }
+        }
+        function offset(value, fallback, length) {
+            return typeof value === "number" && isFinite(value)
+                    ? Math.max(0, Math.min(length, Math.floor(value))) : fallback;
+        }
         for (var i = 0; i < history.length; ++i) {
             var m = history[i], id = m.messageId;
             if (m.role === "system") continue;
             if (m.role === "tool") continue;
-            if (m.reasoning) {
-                var reasoning = _makeReasoningEntry(m.reasoning);
-                reasoning.messageId = id + ":reasoning";
-                reasoning.isComplete = true;
-                rows.push(reasoning);
-            }
             var attachments = (m.parts || []).filter(function (p) { return p.type === "image_url" || p.type === "file"; });
-            if (m.role === "user" || m.content || attachments.length) {
-                rows.push({messageId: id + (m.role === "user" ? ":user" : ":answer"),
-                           text: m.role === "user" ? m.content : "", raw_text: m.content || "", reasoning_text: "",
-                           attachmentsJson: JSON.stringify(attachments), isUser: m.role === "user", isComplete: true,
-                           isThinking: false, isReasoning: false, isToolCall: false,
-                           toolCallId: "", toolState: "", historyIndex: i});
+            var content = m.content || "", reasoning = m.reasoning || "";
+            if (m.role === "assistant" && groups[id]) {
+                var anchor = groups[id][0];
+                // Older native calls have no anchor. They precede the final
+                // answer; local function calls follow their introductory text.
+                var server = groups[id].some(function (entry) { return entry.server === true; });
+                var answerOffset = offset(anchor.answerOffset, server ? 0 : content.length, content.length);
+                var reasoningOffset = offset(anchor.reasoningOffset, reasoning.length, reasoning.length);
+                segment(m, i, reasoning.slice(0, reasoningOffset), content.slice(0, answerOffset), [], 0, 0);
+                group(id, i);
+                segment(m, i, reasoning.slice(reasoningOffset), content.slice(answerOffset), attachments,
+                        reasoningOffset, answerOffset);
+            } else {
+                segment(m, i, reasoning, content, attachments, 0, 0);
+                group(id, i);
             }
-            group(id, i);
             // Old sessions have no snapshots. Preserve an unresolved status rather
             // than presenting an unrecorded outcome as a successful execution.
             if (m.toolCallsJson && !groups[id]) {
@@ -1837,6 +1874,7 @@ YPage {
             for (var i = 0; i < history.length; ++i) {
                 if (row.messageId === history[i].messageId + ":user"
                     || row.messageId === history[i].messageId + ":answer"
+                    || (row.messageId || "").indexOf(history[i].messageId + ":answer:") === 0
                     || row.messageId === history[i].messageId + ":tools") { idx = i; break; }
             }
             if (row.historyIndex !== idx) chatModel.setProperty(r, "historyIndex", idx);
@@ -2391,9 +2429,14 @@ YPage {
         MoreMenuPopup {
             id: id_more_menu
             fontFamily: qmlGlobal.fontFamilyZhCn
-            searchEnabled: chatbot.searchEnabled
-            searchConfigured: chatbot.searchConfigured
+            searchEnabled: chatbot.nativeSearchActive ? chatbot.nativeSearchEnabled : chatbot.searchEnabled
+            searchConfigured: chatbot.nativeSearchActive || chatbot.searchConfigured
+            nativeSearchActive: chatbot.nativeSearchActive
             onWebSearchToggled: {
+                if (chatbot.nativeSearchActive) {
+                    chatbot.nativeSearchEnabled = !chatbot.nativeSearchEnabled;
+                    return;
+                }
                 if (!chatbot.searchConfigured) {
                     toastBanner.warning("请先在设置中配置搜索服务的 API Key");
                     return;
@@ -2642,11 +2685,13 @@ YPage {
             // Keep late reasoning before the answer row.
             var answerIndex = _findCurrentAnswerIndex();
             var reasoningIndex = -1;
+            var entry = _makeReasoningEntry("");
+            entry.messageId = _nextResponseRowId("reasoning");
             if (answerIndex >= 0) {
-                chatModel.insert(answerIndex, _makeReasoningEntry(""));
+                chatModel.insert(answerIndex, entry);
                 reasoningIndex = answerIndex;
             } else {
-                chatModel.append(_makeReasoningEntry(""));
+                chatModel.append(entry);
                 reasoningIndex = chatModel.count - 1;
             }
             _activeReasoningIndex = reasoningIndex;
@@ -2791,8 +2836,6 @@ YPage {
         }
         function onToolStateChanged(state) {
             generationDoneTimer.stop();
-            _completeLastReasoningCard();
-            finalizeLastAssistantIfNeeded();
             _upsertToolSnapshot(state);
             _toolCallActive = (chatbot.toolStates || []).some(function (s) {
                 return s.state !== "done" && s.state !== "error" && s.state !== "cancelled";

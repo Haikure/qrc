@@ -10,6 +10,55 @@ YBackButtonPage {
     id: pluginManagerPage
     objectName: "YPage===PluginManager.qml"
     pageIndex: PageIndex.PluginManager
+    property bool accessGranted: false
+
+    function requestAccess() {
+        if (locker.authorize("plugin_manager", "")) {
+            grantAccess();
+            return;
+        }
+        var component = qmlCreateComponent("YInputPage");
+        if (component.status !== Component.Ready) {
+            qmlGlobal.showToast("密码输入页加载失败", YColors.yellow);
+            backButtonClicked();
+            return;
+        }
+        var page = component.createObject(accessHelper.containerItem);
+        if (!page) {
+            backButtonClicked();
+            return;
+        }
+        var accepted = false;
+        page.inputFinished.connect(function(password) {
+            accepted = locker.authorize("plugin_manager", password);
+            if (accepted)
+                grantAccess();
+            else
+                qmlGlobal.showToast("密码错误，请重试", YColors.yellow);
+        });
+        page.backButtonClicked.connect(function() {
+            qmlGlobal.inputPageShowing = false;
+            if (!accepted)
+                pluginManagerPage.backButtonClicked();
+        });
+        page.placeHolderText = "请输入插件管理密码";
+        qmlGlobal.inputPageShowing = true;
+        page.show();
+    }
+
+    function grantAccess() {
+        accessGranted = true;
+        if (typeof pluginManager !== 'undefined') {
+            pluginListModel.clear();
+            pluginManager.requestPluginList();
+        }
+    }
+
+    YPagePopHelper {
+        id: accessHelper
+        z: 1000
+        isShowing: qmlGlobal.inputPageShowing
+    }
 
     ListModel { id: pluginListModel }
 
@@ -116,6 +165,8 @@ YBackButtonPage {
 
     ListView {
         id: pluginListView
+        visible: pluginManagerPage.accessGranted
+        enabled: pluginManagerPage.accessGranted
         anchors.top: titleContainer.bottom
         anchors.left: parent.left
         anchors.leftMargin: 40
@@ -269,19 +320,14 @@ YBackButtonPage {
         }
     }
 
-    Component.onCompleted: {
-        if (typeof pluginManager !== 'undefined') {
-            // 首次加载前清空列表模型
-            pluginListModel.clear();
-            pluginManager.requestPluginList();
-        }
-    }
+    Component.onCompleted: Qt.callLater(requestAccess)
 
     Connections {
         target: (typeof pluginManager !== 'undefined') ? pluginManager : null
         ignoreUnknownSignals: true
 
         function onPluginListUpdated() {
+            if (!pluginManagerPage.accessGranted) return;
             // 必须先清空模型，否则每次刷新都会追加到旧列表后面
             pluginListModel.clear();
 

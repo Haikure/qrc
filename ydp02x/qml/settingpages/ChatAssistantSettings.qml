@@ -141,6 +141,31 @@ YBackButtonPage {
                 }
             }
 
+            YSettingItemTitle {
+                title: "拍摄图片（连续扫描）"
+            }
+
+            YSettingAboutClickableItem {
+                title: "默认拼接方向"
+                value: cameraCapture.defaultStitchDirection === "horizontal" ? "水平" : "竖直"
+                imageName: "settings/info_more_arrow"
+                onClicked: cameraCapture.defaultStitchDirection =
+                    cameraCapture.defaultStitchDirection === "vertical" ? "horizontal" : "vertical"
+            }
+
+            DescribedClickableTextBox {
+                title: "默认裁剪区域"
+                describe: cameraCapture.defaultCropMode === "upper" ? "上部原图（默认，无重复画面）"
+                          : cameraCapture.defaultCropMode === "lower" ? "下部校正图" : "不裁剪（上下两图，内容重复）"
+                describeItem.width: width - 34
+                onClicked: cameraCapture.defaultCropMode = cameraCapture.defaultCropMode === "none" ? "upper"
+                    : cameraCapture.defaultCropMode === "upper" ? "lower" : "none"
+            }
+
+            YSettingItemTitle {
+                title: "其他对话设置"
+            }
+
             DescribedSwitchItem {
                 title: "语音输入"
                 description: "语音助手识别完成后发送给 AI 助手"
@@ -266,8 +291,15 @@ YBackButtonPage {
                 title: "网络搜索"
             }
 
+            YSettingAboutItem {
+                title: "搜索服务"
+                value: "厂商内置搜索"
+                visible: chatbot.nativeSearchActive
+            }
+
             YSettingAboutClickableItem {
                 title: "搜索服务"
+                visible: !chatbot.nativeSearchActive
                 value: chatbot.searchProvider === "tavily" ? "Tavily"
                        : chatbot.searchProvider === "deepseek" ? "DeepSeek" : "关闭"
                 imageName: "settings/info_more_arrow"
@@ -283,21 +315,26 @@ YBackButtonPage {
 
             DescribedSwitchItem {
                 title: "启用网络搜索"
-                description: !chatbot.searchConfigured ? "请先配置搜索服务的 API Key"
+                description: chatbot.nativeSearchActive ? "厂商内置搜索"
+                             : !chatbot.searchConfigured ? "请先配置搜索服务的 API Key"
                              : chatbot.searchProvider === "deepseek" ? "DeepSeek 网页搜索"
                              : "Tavily 网页搜索"
-                switchOn: chatbot.searchEnabled && chatbot.searchConfigured
+                switchOn: chatbot.nativeSearchActive ? chatbot.nativeSearchEnabled
+                          : chatbot.searchEnabled && chatbot.searchConfigured
                 interval: 0
-                enabled: chatbot.searchConfigured
+                enabled: chatbot.nativeSearchActive || chatbot.searchConfigured
                 onTimerTriggered: {
-                    chatbot.searchEnabled = !chatbot.searchEnabled;
+                    if (chatbot.nativeSearchActive)
+                        chatbot.nativeSearchEnabled = !chatbot.nativeSearchEnabled;
+                    else
+                        chatbot.searchEnabled = !chatbot.searchEnabled;
                 }
             }
 
             YSettingAboutClickableItem {
                 title: "密钥"
                 value: chatbot.searchConfigured ? "已配置" : "未配置"
-                visible: chatbot.searchProvider !== "off"
+                visible: !chatbot.nativeSearchActive && chatbot.searchProvider !== "off"
                 imageName: "settings/info_more_arrow"
                 onClicked: {
                     var cfg = {};
@@ -329,7 +366,7 @@ YBackButtonPage {
             YSettingAboutClickableItem {
                 title: "返回条数"
                 value: chatbot.searchCount + " 条"
-                visible: chatbot.searchProvider !== "off"
+                visible: !chatbot.nativeSearchActive && chatbot.searchProvider !== "off"
                 imageName: "settings/info_more_arrow"
                 onClicked: {
                     var opts = [3, 5, 8, 10];

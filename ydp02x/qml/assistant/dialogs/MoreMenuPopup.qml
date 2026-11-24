@@ -6,6 +6,7 @@ Item {
     property var fontFamily
     property bool searchEnabled: false
     property bool searchConfigured: false
+    property bool nativeSearchActive: false
 
     signal webSearchToggled()
     signal fileReferenceRequested()
@@ -92,7 +93,7 @@ Item {
                         on_DepChanged: requestPaint()
                     }
                     Text {
-                        text: "网络搜索"
+                        text: root.nativeSearchActive ? "厂商搜索" : "网络搜索"
                         color: "white"
                         font.pixelSize: 12
                         font.family: root.fontFamily || ""
